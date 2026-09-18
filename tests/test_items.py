@@ -11,15 +11,22 @@ from dexbuf import (
     NO_OFFSET,
     ClassDataItem,
     ClassDefItem,
+    CodeItem,
+    EncodedCatchHandler,
+    EncodedCatchHandlerList,
     EncodedField,
     EncodedMethod,
+    EncodedTypeAddrPair,
     FieldIdItem,
     Idx,
+    Instruction,
     MethodIdItem,
     Offset,
+    Opcode,
     ProtoIdItem,
     StringDataItem,
     StringIdItem,
+    TryItem,
     TypeIdItem,
     TypeList,
 )
@@ -490,13 +497,228 @@ class TestEncodedFieldAndMethod(unittest.TestCase):
         self.assertEqual(method.__slots__, ("method_idx_diff", "access_flags", "code_off"))
 
     def test_encoded_method_roundtrip(self) -> None:
-        method = EncodedMethod(method_idx_diff=3, access_flags=0x0008, code_off=Offset[Any](0x2000))
+        method = EncodedMethod(
+            method_idx_diff=3, access_flags=0x0008, code_off=Offset[CodeItem](0x2000)
+        )
         raw = method.to_bytes()
         cursor = Cursor(raw)
         parsed = EncodedMethod.from_cursor(cursor)
         self.assertEqual(parsed, method)
-        self.assertEqual(parsed.code_off, Offset[Any](0x2000))
+        self.assertEqual(parsed.code_off, Offset[CodeItem](0x2000))
         self.assertTrue(cursor.is_eof)
+
+
+class TestTryAndCatchHandlers(unittest.TestCase):
+    def test_try_item(self) -> None:
+        self.assertEqual(TryItem.PADDING, 4)
+        self.assertEqual(TryItem.STRUCT.format, "<IHH")
+
+        item = TryItem(start_addr=0x10, insn_count=5, handler_off=0x20)
+        with self.assertRaises(FrozenInstanceError):
+            item.start_addr = 0x20  # type: ignore[misc]
+
+        self.assertEqual(item.__slots__, ("start_addr", "insn_count", "handler_off"))
+
+        raw = item.to_bytes()
+        self.assertEqual(len(raw), 8)
+
+        parsed = TryItem.from_buffer(raw)
+        self.assertEqual(parsed, item)
+
+    def test_encoded_type_addr_pair(self) -> None:
+        pair = EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](3), addr=0x100)
+        with self.assertRaises(FrozenInstanceError):
+            pair.addr = 0x200  # type: ignore[misc]
+
+        self.assertEqual(pair.__slots__, ("type_idx", "addr"))
+
+        raw = pair.to_bytes()
+        parsed = EncodedTypeAddrPair.from_cursor(Cursor(raw))
+        self.assertEqual(parsed, pair)
+
+    def test_encoded_catch_handler(self) -> None:
+        pair1 = EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](1), addr=0x10)
+        pair2 = EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](2), addr=0x20)
+
+        # Handler with catch-all (size <= 0)
+        handler_catch_all = EncodedCatchHandler(
+            size=-2, handlers=(pair1, pair2), catch_all_addr=0x30
+        )
+        with self.assertRaises(FrozenInstanceError):
+            handler_catch_all.size = 1  # type: ignore[misc]
+
+        self.assertEqual(handler_catch_all.__slots__, ("size", "handlers", "catch_all_addr"))
+
+        raw1 = handler_catch_all.to_bytes()
+        parsed1 = EncodedCatchHandler.from_cursor(Cursor(raw1))
+        self.assertEqual(parsed1, handler_catch_all)
+
+        # Handler without catch-all (size > 0)
+        handler_no_catch_all = EncodedCatchHandler(
+            size=2, handlers=(pair1, pair2), catch_all_addr=None
+        )
+        raw2 = handler_no_catch_all.to_bytes()
+        parsed2 = EncodedCatchHandler.from_cursor(Cursor(raw2))
+        self.assertEqual(parsed2, handler_no_catch_all)
+
+    def test_encoded_catch_handler_list(self) -> None:
+        handler = EncodedCatchHandler(
+            size=1,
+            handlers=(EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](5), addr=0x50),),
+            catch_all_addr=None,
+        )
+        handler_list = EncodedCatchHandlerList(size=1, list=(handler,))
+
+        with self.assertRaises(FrozenInstanceError):
+            handler_list.size = 2  # type: ignore[misc]
+
+        self.assertEqual(handler_list.__slots__, ("size", "list"))
+
+        raw = handler_list.to_bytes()
+        parsed = EncodedCatchHandlerList.from_buffer(raw)
+        self.assertEqual(parsed, handler_list)
+
+
+class TestCodeItem(unittest.TestCase):
+    def test_padding_and_struct(self) -> None:
+        self.assertEqual(CodeItem.PADDING, 4)
+        self.assertEqual(CodeItem.HEADER.format, "<4H2I")
+
+        field_names = [f.name for f in dataclasses.fields(CodeItem)]
+        expected_fields = [
+            "registers_size",
+            "ins_size",
+            "outs_size",
+            "tries_size",
+            "debug_info_off",
+            "insns_size",
+            "insns",
+            "tries",
+            "handlers",
+        ]
+        self.assertEqual(field_names, expected_fields)
+
+    def test_immutability_and_slots(self) -> None:
+        item = CodeItem(
+            registers_size=2,
+            ins_size=1,
+            outs_size=0,
+            tries_size=0,
+            debug_info_off=NO_OFFSET,
+            insns_size=1,
+            insns=memoryview(b"\x0e\x00"),  # return-void
+            tries=(),
+            handlers=None,
+        )
+        with self.assertRaises(FrozenInstanceError):
+            item.registers_size = 4  # type: ignore[misc]
+
+        expected_slots = (
+            "registers_size",
+            "ins_size",
+            "outs_size",
+            "tries_size",
+            "debug_info_off",
+            "insns_size",
+            "insns",
+            "tries",
+            "handlers",
+        )
+        self.assertEqual(item.__slots__, expected_slots)
+
+    def test_zero_copy_and_lazy_iop_parsing(self) -> None:
+        # nop (0x0000), return-void (0x000e) -> 2 code units = 4 bytes
+        bytecode = b"\x00\x00\x0e\x00"
+        item_no_tries = CodeItem(
+            registers_size=1,
+            ins_size=0,
+            outs_size=0,
+            tries_size=0,
+            debug_info_off=NO_OFFSET,
+            insns_size=2,
+            insns=memoryview(bytecode),
+            tries=(),
+            handlers=None,
+        )
+
+        raw = item_no_tries.to_bytes()
+        cursor = Cursor(raw)
+        parsed = CodeItem.from_cursor(cursor)
+
+        # Confirm insns is a zero-copy memoryview slice
+        self.assertIsInstance(parsed.insns, memoryview)
+        self.assertEqual(bytes(parsed.insns), bytecode)
+
+        # Lazy instruction parsing
+        iops = list(parsed.iter_iops())
+        self.assertEqual(len(iops), 2)
+        self.assertIsInstance(iops[0], Instruction)
+        self.assertEqual(iops[0].OPCODE, Opcode.NOP)
+        self.assertIsInstance(iops[1], Instruction)
+        self.assertEqual(iops[1].OPCODE, Opcode.RETURN_VOID)
+
+        # Check __iter__ and parse_iops
+        self.assertEqual(list(parsed), iops)
+        self.assertEqual(parsed.parse_iops(), tuple(iops))
+
+    def test_tries_and_padding_even_insns_size(self) -> None:
+        # 2 code units (even) -> no padding before tries
+        bytecode = b"\x00\x00\x0e\x00"
+        try_item = TryItem(start_addr=0, insn_count=1, handler_off=0)
+        handler = EncodedCatchHandler(
+            size=-1,
+            handlers=(EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](0), addr=2),),
+            catch_all_addr=4,
+        )
+        handlers = EncodedCatchHandlerList(size=1, list=(handler,))
+
+        item = CodeItem(
+            registers_size=1,
+            ins_size=0,
+            outs_size=0,
+            tries_size=1,
+            debug_info_off=NO_OFFSET,
+            insns_size=2,
+            insns=memoryview(bytecode),
+            tries=(try_item,),
+            handlers=handlers,
+        )
+
+        raw = item.to_bytes()
+        parsed = CodeItem.from_buffer(raw)
+        self.assertEqual(parsed, item)
+
+    def test_tries_and_padding_odd_insns_size(self) -> None:
+        # 1 code unit (odd) -> 2 bytes padding required before tries
+        bytecode = b"\x0e\x00"  # return-void
+        try_item = TryItem(start_addr=0, insn_count=1, handler_off=0)
+        handler = EncodedCatchHandler(
+            size=1,
+            handlers=(EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](1), addr=10),),
+            catch_all_addr=None,
+        )
+        handlers = EncodedCatchHandlerList(size=1, list=(handler,))
+
+        item = CodeItem(
+            registers_size=1,
+            ins_size=0,
+            outs_size=0,
+            tries_size=1,
+            debug_info_off=NO_OFFSET,
+            insns_size=1,
+            insns=memoryview(bytecode),
+            tries=(try_item,),
+            handlers=handlers,
+        )
+
+        raw = item.to_bytes()
+        # Verify padding bytes exist in raw serialized output
+        # Header size = 16 bytes. insns = 2 bytes. Total = 18 bytes.
+        # Padding = 2 bytes (offsets 18..20)
+        self.assertEqual(raw[18:20], b"\x00\x00")
+
+        parsed = CodeItem.from_buffer(raw)
+        self.assertEqual(parsed, item)
 
 
 class TestClassDataItem(unittest.TestCase):

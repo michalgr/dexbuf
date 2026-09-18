@@ -18,9 +18,15 @@ class TestSanity(unittest.TestCase):
             "NO_INDEX",
             "NO_OFFSET",
             "Count",
+            "FieldIdItem",
             "Idx",
+            "MethodIdItem",
             "Offset",
+            "ProtoIdItem",
             "StringDataItem",
+            "StringIdItem",
+            "TypeIdItem",
+            "TypeList",
             "__version__",
         ]
         self.assertEqual(dexbuf.__all__, expected_all)

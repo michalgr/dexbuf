@@ -1,14 +1,25 @@
 """Generic, distinct integer types with zero runtime overhead."""
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NewType
 
 __all__ = [
     "NO_INDEX",
     "NO_OFFSET",
+    "ArgumentCount",
+    "BranchOffset",
     "Count",
+    "Hat",
     "Idx",
+    "Literal",
     "Offset",
+    "Reg",
 ]
+
+Reg = NewType("Reg", int)
+BranchOffset = NewType("BranchOffset", int)
+Literal = NewType("Literal", int)
+ArgumentCount = NewType("ArgumentCount", int)
+Hat = NewType("Hat", int)
 
 if TYPE_CHECKING:
 

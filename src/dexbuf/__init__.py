@@ -5,6 +5,10 @@ Provides low-level spec representations and a tiered, REPL-friendly API.
 """
 
 from dexbuf.items import (
+    ClassDataItem,
+    ClassDefItem,
+    EncodedField,
+    EncodedMethod,
     FieldIdItem,
     MethodIdItem,
     ProtoIdItem,
@@ -20,7 +24,11 @@ __version__ = "0.1.0.dev0"
 __all__ = [
     "NO_INDEX",
     "NO_OFFSET",
+    "ClassDataItem",
+    "ClassDefItem",
     "Count",
+    "EncodedField",
+    "EncodedMethod",
     "FieldIdItem",
     "Idx",
     "MethodIdItem",

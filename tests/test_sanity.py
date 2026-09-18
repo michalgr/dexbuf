@@ -17,7 +17,11 @@ class TestSanity(unittest.TestCase):
         expected_all = [
             "NO_INDEX",
             "NO_OFFSET",
+            "ClassDataItem",
+            "ClassDefItem",
             "Count",
+            "EncodedField",
+            "EncodedMethod",
             "FieldIdItem",
             "Idx",
             "MethodIdItem",

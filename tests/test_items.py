@@ -4,9 +4,15 @@ import dataclasses
 import struct
 import unittest
 from dataclasses import FrozenInstanceError
+from typing import Any
 
 from dexbuf import (
+    NO_INDEX,
     NO_OFFSET,
+    ClassDataItem,
+    ClassDefItem,
+    EncodedField,
+    EncodedMethod,
     FieldIdItem,
     Idx,
     MethodIdItem,
@@ -363,6 +369,235 @@ class TestTypeList(unittest.TestCase):
         buf = b"\x00\x00\x00\x00" + raw
         from_buf = TypeList.from_buffer(buf, Offset[TypeList](4))
         self.assertEqual(from_buf, type_list)
+
+
+class TestClassDefItem(unittest.TestCase):
+    def test_padding_and_struct(self) -> None:
+        self.assertEqual(ClassDefItem.PADDING, 4)
+        self.assertEqual(ClassDefItem.STRUCT.format, "<8I")
+
+        field_names = [f.name for f in dataclasses.fields(ClassDefItem)]
+        expected_fields = [
+            "class_idx",
+            "access_flags",
+            "superclass_idx",
+            "interfaces_off",
+            "source_file_idx",
+            "annotations_off",
+            "class_data_off",
+            "static_values_off",
+        ]
+        self.assertEqual(field_names, expected_fields)
+        self.assertNotIn("PADDING", field_names)
+        self.assertNotIn("STRUCT", field_names)
+
+    def test_immutability_and_slots(self) -> None:
+        item = ClassDefItem(
+            class_idx=Idx[TypeIdItem](1),
+            access_flags=1,
+            superclass_idx=Idx[TypeIdItem](2),
+            interfaces_off=NO_OFFSET,
+            source_file_idx=Idx[StringIdItem](3),
+            annotations_off=NO_OFFSET,
+            class_data_off=NO_OFFSET,
+            static_values_off=NO_OFFSET,
+        )
+        with self.assertRaises(FrozenInstanceError):
+            item.access_flags = 2  # type: ignore[misc]
+
+        expected_slots = (
+            "class_idx",
+            "access_flags",
+            "superclass_idx",
+            "interfaces_off",
+            "source_file_idx",
+            "annotations_off",
+            "class_data_off",
+            "static_values_off",
+        )
+        self.assertEqual(item.__slots__, expected_slots)
+
+    def test_parsing_and_encoding_roundtrip(self) -> None:
+        item = ClassDefItem(
+            class_idx=Idx[TypeIdItem](10),
+            access_flags=0x0001,  # ACC_PUBLIC
+            superclass_idx=Idx[TypeIdItem](11),
+            interfaces_off=Offset[TypeList](0x0100),
+            source_file_idx=Idx[StringIdItem](12),
+            annotations_off=Offset[None](0x0200),  # type: ignore[type-arg]
+            class_data_off=Offset[ClassDataItem](0x0300),
+            static_values_off=Offset[None](0x0400),  # type: ignore[type-arg]
+        )
+        raw = item.to_bytes()
+        self.assertEqual(len(raw), 32)
+
+        cursor = Cursor(raw)
+        parsed = ClassDefItem.from_cursor(cursor)
+        self.assertEqual(parsed, item)
+
+        buf = b"\x00" * 8 + raw
+        offset = Offset[ClassDefItem](8)
+        from_buf = ClassDefItem.from_buffer(buf, offset)
+        self.assertEqual(from_buf, item)
+
+    def test_no_index_and_no_offset_handling(self) -> None:
+        item = ClassDefItem(
+            class_idx=Idx[TypeIdItem](0),  # Root class
+            access_flags=0x0001,
+            superclass_idx=NO_INDEX,  # java.lang.Object has no superclass
+            interfaces_off=NO_OFFSET,
+            source_file_idx=NO_INDEX,
+            annotations_off=NO_OFFSET,
+            class_data_off=NO_OFFSET,
+            static_values_off=NO_OFFSET,
+        )
+        raw = item.to_bytes()
+        self.assertEqual(len(raw), 32)
+
+        parsed = ClassDefItem.from_buffer(raw)
+        self.assertEqual(parsed, item)
+        self.assertEqual(parsed.superclass_idx, NO_INDEX)
+        self.assertEqual(parsed.interfaces_off, NO_OFFSET)
+        self.assertEqual(parsed.source_file_idx, NO_INDEX)
+        self.assertEqual(parsed.annotations_off, NO_OFFSET)
+        self.assertEqual(parsed.class_data_off, NO_OFFSET)
+        self.assertEqual(parsed.static_values_off, NO_OFFSET)
+
+
+class TestEncodedFieldAndMethod(unittest.TestCase):
+    def test_encoded_field_immutability_and_slots(self) -> None:
+        field = EncodedField(field_idx_diff=5, access_flags=0x0001)
+        with self.assertRaises(FrozenInstanceError):
+            field.access_flags = 0x0002  # type: ignore[misc]
+
+        self.assertEqual(field.__slots__, ("field_idx_diff", "access_flags"))
+
+    def test_encoded_field_roundtrip(self) -> None:
+        field = EncodedField(field_idx_diff=128, access_flags=8)
+        raw = field.to_bytes()
+        cursor = Cursor(raw)
+        parsed = EncodedField.from_cursor(cursor)
+        self.assertEqual(parsed, field)
+        self.assertTrue(cursor.is_eof)
+
+    def test_encoded_method_immutability_and_slots(self) -> None:
+        method = EncodedMethod(
+            method_idx_diff=10, access_flags=0x0001, code_off=Offset[Any](0x1000)
+        )
+        with self.assertRaises(FrozenInstanceError):
+            method.access_flags = 0x0002  # type: ignore[misc]
+
+        self.assertEqual(method.__slots__, ("method_idx_diff", "access_flags", "code_off"))
+
+    def test_encoded_method_roundtrip(self) -> None:
+        method = EncodedMethod(method_idx_diff=3, access_flags=0x0008, code_off=Offset[Any](0x2000))
+        raw = method.to_bytes()
+        cursor = Cursor(raw)
+        parsed = EncodedMethod.from_cursor(cursor)
+        self.assertEqual(parsed, method)
+        self.assertEqual(parsed.code_off, Offset[Any](0x2000))
+        self.assertTrue(cursor.is_eof)
+
+
+class TestClassDataItem(unittest.TestCase):
+    def test_padding_attribute_and_nested_aliases(self) -> None:
+        self.assertEqual(ClassDataItem.PADDING, 1)
+        self.assertIs(ClassDataItem.EncodedField, EncodedField)
+        self.assertIs(ClassDataItem.EncodedMethod, EncodedMethod)
+
+        field_names = [f.name for f in dataclasses.fields(ClassDataItem)]
+        expected_fields = [
+            "static_fields_size",
+            "instance_fields_size",
+            "direct_methods_size",
+            "virtual_methods_size",
+            "static_fields",
+            "instance_fields",
+            "direct_methods",
+            "virtual_methods",
+        ]
+        self.assertEqual(field_names, expected_fields)
+        self.assertNotIn("PADDING", field_names)
+        self.assertNotIn("EncodedField", field_names)
+        self.assertNotIn("EncodedMethod", field_names)
+
+    def test_immutability_and_slots(self) -> None:
+        item = ClassDataItem(
+            static_fields_size=0,
+            instance_fields_size=0,
+            direct_methods_size=0,
+            virtual_methods_size=0,
+            static_fields=(),
+            instance_fields=(),
+            direct_methods=(),
+            virtual_methods=(),
+        )
+        with self.assertRaises(FrozenInstanceError):
+            item.static_fields_size = 1  # type: ignore[misc]
+
+        expected_slots = (
+            "static_fields_size",
+            "instance_fields_size",
+            "direct_methods_size",
+            "virtual_methods_size",
+            "static_fields",
+            "instance_fields",
+            "direct_methods",
+            "virtual_methods",
+        )
+        self.assertEqual(item.__slots__, expected_slots)
+
+    def test_empty_class_data(self) -> None:
+        empty = ClassDataItem(
+            static_fields_size=0,
+            instance_fields_size=0,
+            direct_methods_size=0,
+            virtual_methods_size=0,
+            static_fields=(),
+            instance_fields=(),
+            direct_methods=(),
+            virtual_methods=(),
+        )
+        raw = empty.to_bytes()
+        self.assertEqual(raw, b"\x00\x00\x00\x00")
+
+        parsed = ClassDataItem.from_buffer(raw)
+        self.assertEqual(parsed, empty)
+
+    def test_non_empty_class_data_roundtrip(self) -> None:
+        sf1 = EncodedField(field_idx_diff=1, access_flags=0x0008)
+        sf2 = EncodedField(field_idx_diff=2, access_flags=0x0018)
+        if1 = EncodedField(field_idx_diff=5, access_flags=0x0002)
+
+        dm1 = EncodedMethod(method_idx_diff=1, access_flags=0x10008, code_off=Offset[Any](0x1234))
+        vm1 = EncodedMethod(method_idx_diff=2, access_flags=0x0001, code_off=Offset[Any](0x5678))
+        vm2 = EncodedMethod(method_idx_diff=1, access_flags=0x0001, code_off=NO_OFFSET)
+
+        item = ClassDataItem(
+            static_fields_size=2,
+            instance_fields_size=1,
+            direct_methods_size=1,
+            virtual_methods_size=2,
+            static_fields=(sf1, sf2),
+            instance_fields=(if1,),
+            direct_methods=(dm1,),
+            virtual_methods=(vm1, vm2),
+        )
+
+        raw = item.to_bytes()
+        cursor = Cursor(raw)
+        parsed = ClassDataItem.from_cursor(cursor)
+
+        self.assertEqual(parsed, item)
+        self.assertEqual(parsed.static_fields, (sf1, sf2))
+        self.assertEqual(parsed.instance_fields, (if1,))
+        self.assertEqual(parsed.direct_methods, (dm1,))
+        self.assertEqual(parsed.virtual_methods, (vm1, vm2))
+        self.assertTrue(cursor.is_eof)
+
+        buf = b"HEADER" + raw
+        from_buf = ClassDataItem.from_buffer(buf, Offset[ClassDataItem](6))
+        self.assertEqual(from_buf, item)
 
 
 if __name__ == "__main__":

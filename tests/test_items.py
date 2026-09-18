@@ -1,5 +1,6 @@
 """Unit tests for StringDataItem and DEX spec items."""
 
+import dataclasses
 import unittest
 from dataclasses import FrozenInstanceError
 
@@ -16,6 +17,15 @@ class TestStringDataItem(unittest.TestCase):
         supp_item = StringDataItem.from_str("𐀀World")
         self.assertEqual(supp_item.utf16_size, 7)
         self.assertEqual(supp_item.data, "𐀀World")
+
+    def test_padding_attribute(self) -> None:
+        """Test StringDataItem PADDING class attribute and fields metadata."""
+        self.assertEqual(StringDataItem.PADDING, 1)
+
+        # Verify PADDING is not in dataclasses.fields
+        field_names = [f.name for f in dataclasses.fields(StringDataItem)]
+        self.assertEqual(field_names, ["utf16_size", "data"])
+        self.assertNotIn("PADDING", field_names)
 
     def test_immutability(self) -> None:
         """Test that StringDataItem is frozen and slotted."""

@@ -5,7 +5,7 @@ See https://source.android.com/docs/core/runtime/dex-format
 
 from collections.abc import Buffer
 from dataclasses import dataclass
-from typing import Self
+from typing import ClassVar, Self
 
 from dexbuf.cursor import Cursor
 from dexbuf.leb128 import encode_uleb128
@@ -21,6 +21,8 @@ class StringDataItem:
 
     See https://source.android.com/docs/core/runtime/dex-format#string-data-item
     """
+
+    PADDING: ClassVar[int] = 1
 
     utf16_size: int
     data: str

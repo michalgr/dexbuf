@@ -12,6 +12,30 @@ class TestSanity(unittest.TestCase):
         self.assertTrue(hasattr(dexbuf, "__version__"))
         self.assertTrue(dexbuf.__version__)
 
+    def test_top_level_exports(self) -> None:
+        """Verify that top-level dexbuf module exports only public API items."""
+        expected_all = [
+            "NO_INDEX",
+            "NO_OFFSET",
+            "Count",
+            "Id",
+            "Offset",
+            "StringDataItem",
+            "__version__",
+        ]
+        self.assertEqual(dexbuf.__all__, expected_all)
+
+        forbidden_attributes = [
+            "Cursor",
+            "encode_sleb128",
+            "encode_uleb128",
+            "encode_uleb128p1",
+            "encode_mutf8",
+            "utf16_code_units",
+        ]
+        for attr in forbidden_attributes:
+            self.assertFalse(hasattr(dexbuf, attr), f"{attr} should not be exposed in dexbuf")
+
     def test_environment_tooling(self) -> None:
         """Inspect environment for optional dynamic compilation tools (javac, d8)."""
         javac_available = shutil.which("javac") is not None

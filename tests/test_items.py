@@ -3,7 +3,8 @@
 import unittest
 from dataclasses import FrozenInstanceError
 
-from dexbuf import NO_OFFSET, Cursor, Offset, StringDataItem
+from dexbuf import NO_OFFSET, Offset, StringDataItem
+from dexbuf.cursor import Cursor
 
 
 class TestStringDataItem(unittest.TestCase):

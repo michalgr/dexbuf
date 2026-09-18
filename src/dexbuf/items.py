@@ -73,7 +73,7 @@ class StringIdItem:
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse a StringIdItem from a Cursor."""
-        (string_data_off,) = cls.STRUCT.unpack(cursor.read_bytes(cls.STRUCT.size))
+        (string_data_off,) = cursor.unpack(cls.STRUCT)
         return cls(string_data_off=Offset[StringDataItem](string_data_off))
 
     @classmethod
@@ -101,7 +101,7 @@ class TypeIdItem:
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse a TypeIdItem from a Cursor."""
-        (descriptor_idx,) = cls.STRUCT.unpack(cursor.read_bytes(cls.STRUCT.size))
+        (descriptor_idx,) = cursor.unpack(cls.STRUCT)
         return cls(descriptor_idx=Idx[StringIdItem](descriptor_idx))
 
     @classmethod
@@ -138,7 +138,7 @@ class TypeList:
         @classmethod
         def from_cursor(cls, cursor: Cursor) -> Self:
             """Parse a TypeList.Item from a Cursor."""
-            (type_idx,) = cls.STRUCT.unpack(cursor.read_bytes(cls.STRUCT.size))
+            (type_idx,) = cursor.unpack(cls.STRUCT)
             return cls(type_idx=Idx[TypeIdItem](type_idx))
 
         def to_bytes(self) -> bytes:
@@ -166,7 +166,7 @@ class TypeList:
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse a TypeList from a Cursor."""
-        (size,) = cls.HEADER.unpack(cursor.read_bytes(cls.HEADER.size))
+        (size,) = cursor.unpack(cls.HEADER)
         items = tuple(cls.Item.from_cursor(cursor) for _ in range(size))
         return cls(size=size, list=items)
 
@@ -197,9 +197,7 @@ class ProtoIdItem:
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse a ProtoIdItem from a Cursor."""
-        shorty_idx, return_type_idx, parameters_off = cls.STRUCT.unpack(
-            cursor.read_bytes(cls.STRUCT.size)
-        )
+        shorty_idx, return_type_idx, parameters_off = cursor.unpack(cls.STRUCT)
         return cls(
             shorty_idx=Idx[StringIdItem](shorty_idx),
             return_type_idx=Idx[TypeIdItem](return_type_idx),
@@ -233,7 +231,7 @@ class FieldIdItem:
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse a FieldIdItem from a Cursor."""
-        class_idx, type_idx, name_idx = cls.STRUCT.unpack(cursor.read_bytes(cls.STRUCT.size))
+        class_idx, type_idx, name_idx = cursor.unpack(cls.STRUCT)
         return cls(
             class_idx=Idx[TypeIdItem](class_idx),
             type_idx=Idx[TypeIdItem](type_idx),
@@ -267,7 +265,7 @@ class MethodIdItem:
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse a MethodIdItem from a Cursor."""
-        class_idx, proto_idx, name_idx = cls.STRUCT.unpack(cursor.read_bytes(cls.STRUCT.size))
+        class_idx, proto_idx, name_idx = cursor.unpack(cls.STRUCT)
         return cls(
             class_idx=Idx[TypeIdItem](class_idx),
             proto_idx=Idx[ProtoIdItem](proto_idx),

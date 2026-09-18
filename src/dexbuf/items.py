@@ -14,11 +14,13 @@ from dexbuf.mutf8 import encode_mutf8, utf16_code_units
 from dexbuf.types import NO_OFFSET, Idx, Offset
 
 __all__ = [
+    "CallSiteIdItem",
     "ClassDataItem",
     "ClassDefItem",
     "EncodedField",
     "EncodedMethod",
     "FieldIdItem",
+    "MethodHandleItem",
     "MethodIdItem",
     "ProtoIdItem",
     "StringDataItem",
@@ -467,4 +469,70 @@ class ClassDefItem:
             self.annotations_off,
             self.class_data_off,
             self.static_values_off,
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class CallSiteIdItem:
+    """Call site ID item record representing offset to a call_site_item.
+
+    See https://source.android.com/docs/core/runtime/dex-format#call-site-id-item
+    """
+
+    PADDING: ClassVar[int] = 4
+    STRUCT: ClassVar[struct.Struct] = struct.Struct("<I")
+
+    call_site_off: Offset[Any]
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse a CallSiteIdItem from a Cursor."""
+        (call_site_off,) = cursor.unpack(cls.STRUCT)
+        return cls(call_site_off=Offset[Any](call_site_off))
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse a CallSiteIdItem from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this CallSiteIdItem to raw DEX bytes."""
+        return self.STRUCT.pack(self.call_site_off)
+
+
+@dataclass(slots=True, frozen=True)
+class MethodHandleItem:
+    """Method handle item record representing method handle definition.
+
+    See https://source.android.com/docs/core/runtime/dex-format#method-handle-item
+    """
+
+    PADDING: ClassVar[int] = 4
+    STRUCT: ClassVar[struct.Struct] = struct.Struct("<HHHH")
+
+    method_handle_type: int
+    unused1: int
+    field_or_method_id: int
+    unused2: int
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse a MethodHandleItem from a Cursor."""
+        method_handle_type, unused1, field_or_method_id, unused2 = cursor.unpack(cls.STRUCT)
+        return cls(
+            method_handle_type=method_handle_type,
+            unused1=unused1,
+            field_or_method_id=field_or_method_id,
+            unused2=unused2,
+        )
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse a MethodHandleItem from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this MethodHandleItem to raw DEX bytes."""
+        return self.STRUCT.pack(
+            self.method_handle_type, self.unused1, self.field_or_method_id, self.unused2
         )

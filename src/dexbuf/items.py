@@ -6,25 +6,33 @@ See https://source.android.com/docs/core/runtime/dex-format
 import struct
 from collections.abc import Buffer, Iterator
 from dataclasses import dataclass
-from typing import Any, ClassVar, Self, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Self, overload
 
 from dexbuf.cursor import Cursor
-from dexbuf.leb128 import encode_uleb128
+from dexbuf.leb128 import encode_sleb128, encode_uleb128
 from dexbuf.mutf8 import encode_mutf8, utf16_code_units
 from dexbuf.types import NO_OFFSET, Idx, Offset
+
+if TYPE_CHECKING:
+    from dexbuf.instructions import IOP
 
 __all__ = [
     "CallSiteIdItem",
     "ClassDataItem",
     "ClassDefItem",
+    "CodeItem",
+    "EncodedCatchHandler",
+    "EncodedCatchHandlerList",
     "EncodedField",
     "EncodedMethod",
+    "EncodedTypeAddrPair",
     "FieldIdItem",
     "MethodHandleItem",
     "MethodIdItem",
     "ProtoIdItem",
     "StringDataItem",
     "StringIdItem",
+    "TryItem",
     "TypeIdItem",
     "TypeList",
 ]
@@ -319,14 +327,14 @@ class EncodedMethod:
 
     method_idx_diff: int
     access_flags: int
-    code_off: Offset[Any]
+    code_off: Offset[CodeItem]
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse an EncodedMethod from a Cursor."""
         method_idx_diff = cursor.read_uleb128()
         access_flags = cursor.read_uleb128()
-        code_off = Offset[Any](cursor.read_uleb128())
+        code_off = Offset[CodeItem](cursor.read_uleb128())
         return cls(
             method_idx_diff=method_idx_diff,
             access_flags=access_flags,
@@ -340,6 +348,215 @@ class EncodedMethod:
             + encode_uleb128(self.access_flags)
             + encode_uleb128(self.code_off)
         )
+
+
+@dataclass(slots=True, frozen=True)
+class TryItem:
+    """Try item record representing a block of code covered by try/catch.
+
+    See https://source.android.com/docs/core/runtime/dex-format#try-item
+    """
+
+    PADDING: ClassVar[int] = 4
+    STRUCT: ClassVar[struct.Struct] = struct.Struct("<IHH")
+
+    start_addr: int
+    insn_count: int
+    handler_off: int
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse a TryItem from a Cursor."""
+        start_addr, insn_count, handler_off = cursor.unpack(cls.STRUCT)
+        return cls(
+            start_addr=start_addr,
+            insn_count=insn_count,
+            handler_off=handler_off,
+        )
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse a TryItem from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this TryItem to raw DEX bytes."""
+        return self.STRUCT.pack(self.start_addr, self.insn_count, self.handler_off)
+
+
+@dataclass(slots=True, frozen=True)
+class EncodedTypeAddrPair:
+    """Encoded type address pair representing exception type and catch handler address.
+
+    See https://source.android.com/docs/core/runtime/dex-format#encoded-type-addr-pair
+    """
+
+    type_idx: Idx[TypeIdItem]
+    addr: int
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse an EncodedTypeAddrPair from a Cursor."""
+        type_idx = cursor.read_uleb128()
+        addr = cursor.read_uleb128()
+        return cls(type_idx=Idx[TypeIdItem](type_idx), addr=addr)
+
+    def to_bytes(self) -> bytes:
+        """Encode this EncodedTypeAddrPair to raw DEX bytes."""
+        return encode_uleb128(self.type_idx) + encode_uleb128(self.addr)
+
+
+@dataclass(slots=True, frozen=True)
+class EncodedCatchHandler:
+    """Encoded catch handler structure representing list of catch pairs and optional catch-all.
+
+    See https://source.android.com/docs/core/runtime/dex-format#encoded-catch-handler
+    """
+
+    size: int
+    handlers: tuple[EncodedTypeAddrPair, ...]
+    catch_all_addr: int | None
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse an EncodedCatchHandler from a Cursor."""
+        size = cursor.read_sleb128()
+        count = abs(size)
+        handlers = tuple(EncodedTypeAddrPair.from_cursor(cursor) for _ in range(count))
+        if size <= 0:
+            catch_all_addr = cursor.read_uleb128()
+        else:
+            catch_all_addr = None
+        return cls(size=size, handlers=handlers, catch_all_addr=catch_all_addr)
+
+    def to_bytes(self) -> bytes:
+        """Encode this EncodedCatchHandler to raw DEX bytes."""
+        res = encode_sleb128(self.size) + b"".join(h.to_bytes() for h in self.handlers)
+        if self.size <= 0:
+            if self.catch_all_addr is None:
+                raise ValueError("catch_all_addr required when size <= 0")
+            res += encode_uleb128(self.catch_all_addr)
+        return res
+
+
+@dataclass(slots=True, frozen=True)
+class EncodedCatchHandlerList:
+    """Encoded catch handler list structure.
+
+    See https://source.android.com/docs/core/runtime/dex-format#encoded-catch-handler-list
+    """
+
+    size: int
+    list: tuple[EncodedCatchHandler, ...]
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse an EncodedCatchHandlerList from a Cursor."""
+        size = cursor.read_uleb128()
+        handlers = tuple(EncodedCatchHandler.from_cursor(cursor) for _ in range(size))
+        return cls(size=size, list=handlers)
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse an EncodedCatchHandlerList from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this EncodedCatchHandlerList to raw DEX bytes."""
+        return encode_uleb128(self.size) + b"".join(h.to_bytes() for h in self.list)
+
+
+@dataclass(slots=True, frozen=True)
+class CodeItem:
+    """Code item record representing method execution header, bytecode, and try/catch data.
+
+    See https://source.android.com/docs/core/runtime/dex-format#code-item
+    """
+
+    PADDING: ClassVar[int] = 4
+    HEADER: ClassVar[struct.Struct] = struct.Struct("<4H2I")
+
+    registers_size: int
+    ins_size: int
+    outs_size: int
+    tries_size: int
+    debug_info_off: Offset[Any]
+    insns_size: int
+    insns: memoryview
+    tries: tuple[TryItem, ...]
+    handlers: EncodedCatchHandlerList | None
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse a CodeItem from a Cursor."""
+        (
+            registers_size,
+            ins_size,
+            outs_size,
+            tries_size,
+            debug_info_off,
+            insns_size,
+        ) = cursor.unpack(cls.HEADER)
+
+        insns = cursor.read_slice(insns_size * 2)
+
+        if tries_size > 0:
+            if insns_size % 2 != 0:
+                cursor.skip(2)
+            tries = tuple(TryItem.from_cursor(cursor) for _ in range(tries_size))
+            handlers = EncodedCatchHandlerList.from_cursor(cursor)
+        else:
+            tries = ()
+            handlers = None
+
+        return cls(
+            registers_size=registers_size,
+            ins_size=ins_size,
+            outs_size=outs_size,
+            tries_size=tries_size,
+            debug_info_off=Offset[Any](debug_info_off),
+            insns_size=insns_size,
+            insns=insns,
+            tries=tries,
+            handlers=handlers,
+        )
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse a CodeItem from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def iter_iops(self) -> Iterator[IOP]:
+        """Iterate over Dalvik instructions and payloads in bytecode lazily."""
+        from dexbuf.instructions import parse_iop
+
+        cursor = Cursor(self.insns)
+        while not cursor.is_eof:
+            yield parse_iop(cursor)
+
+    def __iter__(self) -> Iterator[IOP]:
+        return self.iter_iops()
+
+    def parse_iops(self) -> tuple[IOP, ...]:
+        """Parse all Dalvik instructions and payloads into a tuple."""
+        return tuple(self.iter_iops())
+
+    def to_bytes(self) -> bytes:
+        """Encode this CodeItem to raw DEX bytes."""
+        header_bytes = self.HEADER.pack(
+            self.registers_size,
+            self.ins_size,
+            self.outs_size,
+            self.tries_size,
+            self.debug_info_off,
+            self.insns_size,
+        )
+        insns_bytes = bytes(self.insns)
+        padding_bytes = b"\x00\x00" if (self.tries_size > 0 and self.insns_size % 2 != 0) else b""
+        tries_bytes = b"".join(t.to_bytes() for t in self.tries)
+        handlers_bytes = self.handlers.to_bytes() if self.handlers is not None else b""
+
+        return header_bytes + insns_bytes + padding_bytes + tries_bytes + handlers_bytes
 
 
 @dataclass(slots=True, frozen=True)

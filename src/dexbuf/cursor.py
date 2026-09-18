@@ -5,7 +5,7 @@ See https://source.android.com/docs/core/runtime/dex-format
 
 import struct
 from collections.abc import Buffer
-from typing import Self
+from typing import Any, Self
 
 __all__ = ["Cursor"]
 
@@ -60,6 +60,17 @@ class Cursor:
     def remaining(self) -> int:
         """Return number of remaining unread bytes in buffer."""
         return len(self._buffer) - self._offset
+
+    def unpack(self, s: struct.Struct) -> tuple[Any, ...]:
+        """Unpack a struct.Struct directly from buffer at current offset and advance offset."""
+        if self._offset + s.size > len(self._buffer):
+            raise EOFError(
+                f"Unexpected EOF while unpacking {s.format} "
+                f"(need {s.size} bytes; remaining: {self.remaining})"
+            )
+        val = s.unpack_from(self._buffer, self._offset)
+        self._offset += s.size
+        return val
 
     # --- Numeric reads (little-endian) ---
 

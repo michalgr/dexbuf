@@ -60,6 +60,31 @@ class TestCursor(unittest.TestCase):
         with self.assertRaises(ValueError):
             c.offset = 6
 
+    def test_unpack(self) -> None:
+        """Test unpacking struct.Struct directly from buffer."""
+        import struct
+
+        s_single = struct.Struct("<I")
+        s_multi = struct.Struct("<HHI")
+
+        data = s_single.pack(0x12345678) + s_multi.pack(0x1111, 0x2222, 0x33334444)
+        c = Cursor(data)
+
+        (val_u32,) = c.unpack(s_single)
+        self.assertEqual(val_u32, 0x12345678)
+        self.assertEqual(c.tell(), 4)
+
+        f1, f2, f3 = c.unpack(s_multi)
+        self.assertEqual((f1, f2, f3), (0x1111, 0x2222, 0x33334444))
+        self.assertEqual(c.tell(), 12)
+        self.assertTrue(c.is_eof)
+
+        # Test EOFError on insufficient remaining bytes
+        c.seek(10)
+        with self.assertRaises(EOFError) as ctx:
+            c.unpack(s_single)
+        self.assertIn("need 4 bytes; remaining: 2", str(ctx.exception))
+
     def test_numeric_reads(self) -> None:
         """Test unsigned and signed little-endian numeric reads."""
         # \xfe = 254 (-2 signed u8/i8)

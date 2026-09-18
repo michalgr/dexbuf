@@ -32,7 +32,7 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Run pyrefly type check
-        run: uv run pyrefly
+        run: uv run pyrefly check
 
       - name: Run pytest
         run: uv run pytest

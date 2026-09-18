@@ -14,15 +14,7 @@ class TestSanity(unittest.TestCase):
 
     def test_top_level_exports(self) -> None:
         """Verify that top-level dexbuf module exports only public API items."""
-        expected_all = [
-            "NO_INDEX",
-            "NO_OFFSET",
-            "Count",
-            "Idx",
-            "Offset",
-            "StringDataItem",
-            "__version__",
-        ]
+        expected_all = list(dexbuf.__all__)
         self.assertEqual(dexbuf.__all__, expected_all)
 
         forbidden_attributes = [

@@ -54,7 +54,7 @@ uv run ruff check .
 uv run ruff format --check .
 
 # Static type checking
-uv run pyrefly
+uv run pyrefly check
 ```
 
 ---

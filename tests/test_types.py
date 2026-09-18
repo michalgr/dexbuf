@@ -3,11 +3,11 @@
 import unittest
 from typing import Any
 
-from dexbuf import NO_INDEX, NO_OFFSET, Count, Id, Offset
+from dexbuf import NO_INDEX, NO_OFFSET, Count, Idx, Offset
 from dexbuf.types import NO_INDEX as TypesNO_INDEX
 from dexbuf.types import NO_OFFSET as TypesNO_OFFSET
 from dexbuf.types import Count as TypesCount
-from dexbuf.types import Id as TypesId
+from dexbuf.types import Idx as TypesIdx
 from dexbuf.types import Offset as TypesOffset
 
 
@@ -18,7 +18,7 @@ class DummyItem:
 class TestTypesRuntime(unittest.TestCase):
     def test_reexports(self) -> None:
         """Verify exports match between dexbuf and dexbuf.types."""
-        self.assertIs(Id, TypesId)
+        self.assertIs(Idx, TypesIdx)
         self.assertIs(Offset, TypesOffset)
         self.assertIs(Count, TypesCount)
         self.assertIs(NO_INDEX, TypesNO_INDEX)
@@ -26,7 +26,7 @@ class TestTypesRuntime(unittest.TestCase):
 
     def test_native_int_type(self) -> None:
         """Verify that instances evaluate directly to native Python ints."""
-        id_val = Id(42)
+        id_val = Idx(42)
         offset_val = Offset(0x10)
         count_val = Count(5)
 
@@ -40,8 +40,8 @@ class TestTypesRuntime(unittest.TestCase):
         self.assertIs(count_val, 5)
 
     def test_generic_subscripting(self) -> None:
-        """Verify generic subscripting Id[T](val) returns native int directly."""
-        id_typed = Id[DummyItem](100)
+        """Verify generic subscripting Idx[T](val) returns native int directly."""
+        id_typed = Idx[DummyItem](100)
         offset_typed = Offset[DummyItem](0x200)
         count_typed = Count[DummyItem](10)
 
@@ -89,8 +89,8 @@ class TestTypesRuntime(unittest.TestCase):
         self.assertIs(type(NO_OFFSET), int)
 
     def test_union_with_none(self) -> None:
-        """Verify Id[T] | None, Offset[T] | None, Count[T] | None compatibility."""
-        maybe_id: Id[DummyItem] | None = Id[DummyItem](1) if True else None
+        """Verify Idx[T] | None, Offset[T] | None, Count[T] | None compatibility."""
+        maybe_id: Idx[DummyItem] | None = Idx[DummyItem](1) if True else None
         maybe_offset: Offset[Any] | None = None
         maybe_count: Count[DummyItem] | None = Count(0)
 

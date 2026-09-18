@@ -18,7 +18,7 @@ class TestSanity(unittest.TestCase):
             "NO_INDEX",
             "NO_OFFSET",
             "Count",
-            "Id",
+            "Idx",
             "Offset",
             "StringDataItem",
             "__version__",

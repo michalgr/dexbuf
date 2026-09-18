@@ -6,13 +6,13 @@ __all__ = [
     "NO_INDEX",
     "NO_OFFSET",
     "Count",
-    "Id",
+    "Idx",
     "Offset",
 ]
 
 if TYPE_CHECKING:
 
-    class Id[T](int):
+    class Idx[T](int):
         """Distinct integer type representing an item identifier or table index."""
 
     class Offset[T](int):
@@ -32,7 +32,7 @@ else:
         def __class_getitem__(cls, item: Any) -> type:
             return cls
 
-    class Id(_PhantomInt):
+    class Idx(_PhantomInt):
         """Distinct integer type representing an item identifier or table index."""
 
     class Offset(_PhantomInt):
@@ -42,5 +42,5 @@ else:
         """Distinct integer type representing an item count or length."""
 
 
-NO_INDEX: Id[Any] = Id(0xFFFF_FFFF)
+NO_INDEX: Idx[Any] = Idx(0xFFFF_FFFF)
 NO_OFFSET: Offset[Any] = Offset(0)

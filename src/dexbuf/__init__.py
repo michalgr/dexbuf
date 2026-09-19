@@ -16,6 +16,7 @@ from dexbuf.items import (
     ClassDefItem,
     CodeItem,
     DebugInfoItem,
+    EncodedArrayItem,
     EncodedCatchHandler,
     EncodedCatchHandlerList,
     EncodedField,
@@ -43,6 +44,13 @@ from dexbuf.types import (
     Offset,
     Reg,
 )
+from dexbuf.value import (
+    AnnotationElement,
+    EncodedAnnotation,
+    EncodedArray,
+    EncodedValue,
+    ValueType,
+)
 
 __version__ = "0.1.0.dev0"
 
@@ -50,6 +58,7 @@ __all__ = [
     "IOP",
     "NO_INDEX",
     "NO_OFFSET",
+    "AnnotationElement",
     "ArgumentCount",
     "BranchOffset",
     "CallSiteIdItem",
@@ -61,11 +70,15 @@ __all__ = [
     "DebugInstruction",
     "DebugOpcode",
     "DebugPosition",
+    "EncodedAnnotation",
+    "EncodedArray",
+    "EncodedArrayItem",
     "EncodedCatchHandler",
     "EncodedCatchHandlerList",
     "EncodedField",
     "EncodedMethod",
     "EncodedTypeAddrPair",
+    "EncodedValue",
     "FieldIdItem",
     "Hat",
     "Idx",
@@ -83,5 +96,6 @@ __all__ = [
     "TryItem",
     "TypeIdItem",
     "TypeList",
+    "ValueType",
     "__version__",
 ]

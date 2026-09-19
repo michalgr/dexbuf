@@ -13,6 +13,7 @@ from dexbuf.debug import skip_debug_instruction
 from dexbuf.leb128 import encode_sleb128, encode_uleb128, encode_uleb128p1
 from dexbuf.mutf8 import encode_mutf8, utf16_code_units
 from dexbuf.types import NO_OFFSET, Idx, Offset
+from dexbuf.value import EncodedArray
 
 if TYPE_CHECKING:
     from dexbuf.debug import DebugInstruction, DebugPosition
@@ -24,6 +25,7 @@ __all__ = [
     "ClassDefItem",
     "CodeItem",
     "DebugInfoItem",
+    "EncodedArrayItem",
     "EncodedCatchHandler",
     "EncodedCatchHandlerList",
     "EncodedField",
@@ -721,7 +723,7 @@ class ClassDefItem:
     source_file_idx: Idx[StringIdItem]
     annotations_off: Offset[Any]
     class_data_off: Offset[ClassDataItem]
-    static_values_off: Offset[Any]
+    static_values_off: Offset[EncodedArrayItem]
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -744,7 +746,7 @@ class ClassDefItem:
             source_file_idx=Idx[StringIdItem](source_file_idx),
             annotations_off=Offset[Any](annotations_off),
             class_data_off=Offset[ClassDataItem](class_data_off),
-            static_values_off=Offset[Any](static_values_off),
+            static_values_off=Offset[EncodedArrayItem](static_values_off),
         )
 
     @classmethod
@@ -767,6 +769,32 @@ class ClassDefItem:
 
 
 @dataclass(slots=True, frozen=True)
+class EncodedArrayItem:
+    """Encoded array item record.
+
+    See https://source.android.com/docs/core/runtime/dex-format#encoded-array-item
+    """
+
+    PADDING: ClassVar[int] = 1
+
+    value: EncodedArray
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse an EncodedArrayItem from a Cursor."""
+        return cls(value=EncodedArray.from_cursor(cursor))
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse an EncodedArrayItem from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this EncodedArrayItem to raw DEX bytes."""
+        return self.value.to_bytes()
+
+
+@dataclass(slots=True, frozen=True)
 class CallSiteIdItem:
     """Call site ID item record representing offset to a call_site_item.
 
@@ -776,13 +804,13 @@ class CallSiteIdItem:
     PADDING: ClassVar[int] = 4
     STRUCT: ClassVar[struct.Struct] = struct.Struct("<I")
 
-    call_site_off: Offset[Any]
+    call_site_off: Offset[EncodedArrayItem]
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse a CallSiteIdItem from a Cursor."""
         (call_site_off,) = cursor.unpack(cls.STRUCT)
-        return cls(call_site_off=Offset[Any](call_site_off))
+        return cls(call_site_off=Offset[EncodedArrayItem](call_site_off))
 
     @classmethod
     def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:

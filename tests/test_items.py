@@ -9,14 +9,18 @@ from typing import Any
 from dexbuf import (
     NO_INDEX,
     NO_OFFSET,
+    CallSiteIdItem,
     ClassDataItem,
     ClassDefItem,
     CodeItem,
+    EncodedArray,
+    EncodedArrayItem,
     EncodedCatchHandler,
     EncodedCatchHandlerList,
     EncodedField,
     EncodedMethod,
     EncodedTypeAddrPair,
+    EncodedValue,
     FieldIdItem,
     Idx,
     Instruction,
@@ -29,6 +33,7 @@ from dexbuf import (
     TryItem,
     TypeIdItem,
     TypeList,
+    ValueType,
 )
 from dexbuf.cursor import Cursor
 from dexbuf.debug import (
@@ -457,6 +462,20 @@ class TestClassDefItem(unittest.TestCase):
         offset = Offset[ClassDefItem](8)
         from_buf = ClassDefItem.from_buffer(buf, offset)
         self.assertEqual(from_buf, item)
+
+    def test_typed_static_values_off(self) -> None:
+        """Verify static_values_off is typed as Offset[EncodedArrayItem]."""
+        item = ClassDefItem(
+            class_idx=Idx[TypeIdItem](1),
+            access_flags=1,
+            superclass_idx=Idx[TypeIdItem](2),
+            interfaces_off=NO_OFFSET,
+            source_file_idx=Idx[StringIdItem](3),
+            annotations_off=NO_OFFSET,
+            class_data_off=NO_OFFSET,
+            static_values_off=Offset[EncodedArrayItem](0x1234),
+        )
+        self.assertEqual(item.static_values_off, Offset[EncodedArrayItem](0x1234))
 
     def test_no_index_and_no_offset_handling(self) -> None:
         item = ClassDefItem(
@@ -956,6 +975,39 @@ class TestDebugInfoItem(unittest.TestCase):
                 epilogue_begin=True,
             ),
         )
+
+
+class TestEncodedArrayItemAndCallSiteIdItem(unittest.TestCase):
+    def test_encoded_array_item(self) -> None:
+        """Verify EncodedArrayItem PADDING, immutability, parsing, and serialization."""
+        self.assertEqual(EncodedArrayItem.PADDING, 1)
+
+        val = EncodedValue(value_arg=0, value_type=ValueType.INT, value=100)
+        arr = EncodedArray(size=1, values=(val,))
+        item = EncodedArrayItem(value=arr)
+
+        with self.assertRaises(FrozenInstanceError):
+            item.value = arr  # type: ignore[misc]
+
+        self.assertEqual(item.__slots__, ("value",))
+
+        raw = item.to_bytes()
+        parsed = EncodedArrayItem.from_buffer(raw)
+        self.assertEqual(parsed, item)
+        self.assertEqual(parsed.value.values[0].value, 100)
+
+    def test_call_site_id_item(self) -> None:
+        """Verify CallSiteIdItem call_site_off typed as Offset[EncodedArrayItem]."""
+        self.assertEqual(CallSiteIdItem.PADDING, 4)
+
+        item = CallSiteIdItem(call_site_off=Offset[EncodedArrayItem](0x001000))
+        with self.assertRaises(FrozenInstanceError):
+            item.call_site_off = Offset[EncodedArrayItem](0x2000)  # type: ignore[misc]
+
+        raw = item.to_bytes()
+        parsed = CallSiteIdItem.from_buffer(raw)
+        self.assertEqual(parsed, item)
+        self.assertEqual(parsed.call_site_off, Offset[EncodedArrayItem](0x001000))
 
 
 if __name__ == "__main__":

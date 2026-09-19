@@ -129,17 +129,17 @@ class DbgStartLocal:
     """
 
     register_num: int
-    name_idx: Idx[StringIdItem]
-    type_idx: Idx[TypeIdItem]
+    name_idx: Idx[StringIdItem] | None
+    type_idx: Idx[TypeIdItem] | None
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse DbgStartLocal from cursor."""
         register_num = cursor.read_uleb128()
         raw_name = cursor.read_uleb128p1()
-        name_idx = NO_INDEX if raw_name == -1 else Idx[Any](raw_name)
+        name_idx = None if raw_name == -1 else Idx[Any](raw_name)
         raw_type = cursor.read_uleb128p1()
-        type_idx = NO_INDEX if raw_type == -1 else Idx[Any](raw_type)
+        type_idx = None if raw_type == -1 else Idx[Any](raw_type)
         return cls(register_num=register_num, name_idx=name_idx, type_idx=type_idx)
 
     @staticmethod
@@ -167,20 +167,20 @@ class DbgStartLocalExtended:
     """
 
     register_num: int
-    name_idx: Idx[StringIdItem]
-    type_idx: Idx[TypeIdItem]
-    sig_idx: Idx[StringIdItem]
+    name_idx: Idx[StringIdItem] | None
+    type_idx: Idx[TypeIdItem] | None
+    sig_idx: Idx[StringIdItem] | None
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse DbgStartLocalExtended from cursor."""
         register_num = cursor.read_uleb128()
         raw_name = cursor.read_uleb128p1()
-        name_idx = NO_INDEX if raw_name == -1 else Idx[Any](raw_name)
+        name_idx = None if raw_name == -1 else Idx[Any](raw_name)
         raw_type = cursor.read_uleb128p1()
-        type_idx = NO_INDEX if raw_type == -1 else Idx[Any](raw_type)
+        type_idx = None if raw_type == -1 else Idx[Any](raw_type)
         raw_sig = cursor.read_uleb128p1()
-        sig_idx = NO_INDEX if raw_sig == -1 else Idx[Any](raw_sig)
+        sig_idx = None if raw_sig == -1 else Idx[Any](raw_sig)
         return cls(
             register_num=register_num,
             name_idx=name_idx,
@@ -304,13 +304,13 @@ class DbgSetFile:
     Opcode: 0x09
     """
 
-    name_idx: Idx[StringIdItem]
+    name_idx: Idx[StringIdItem] | None
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse DbgSetFile from cursor."""
         raw_name = cursor.read_uleb128p1()
-        name_idx = NO_INDEX if raw_name == -1 else Idx[Any](raw_name)
+        name_idx = None if raw_name == -1 else Idx[Any](raw_name)
         return cls(name_idx=name_idx)
 
     @staticmethod
@@ -379,7 +379,7 @@ class DebugPosition:
 
     address: int
     line: int
-    source_file_idx: Idx[StringIdItem]
+    source_file_idx: Idx[StringIdItem] | None
     prologue_end: bool
     epilogue_begin: bool
 
@@ -448,7 +448,7 @@ class DebugStateMachine:
 
     line: int
     address: int = 0
-    source_file_idx: Idx[StringIdItem] = NO_INDEX
+    source_file_idx: Idx[StringIdItem] | None = None
     prologue_end: bool = False
     epilogue_begin: bool = False
 
@@ -483,9 +483,11 @@ class DebugStateMachine:
 def iter_debug_positions(
     instructions: Iterable[DebugInstruction],
     line_start: int,
-    initial_source_file: Idx[StringIdItem] = NO_INDEX,
+    initial_source_file: Idx[StringIdItem] | None = None,
 ) -> Iterator[DebugPosition]:
     """Evaluate debug bytecode state machine over instructions and yield DebugPosition entries."""
+    if initial_source_file == NO_INDEX:
+        initial_source_file = None
     state = DebugStateMachine(line=line_start, source_file_idx=initial_source_file)
     for inst in instructions:
         if (pos := state.step(inst)) is not None:

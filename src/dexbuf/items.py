@@ -12,7 +12,7 @@ from dexbuf.cursor import Cursor
 from dexbuf.debug import skip_debug_instruction
 from dexbuf.leb128 import encode_sleb128, encode_uleb128, encode_uleb128p1
 from dexbuf.mutf8 import encode_mutf8, utf16_code_units
-from dexbuf.types import NO_INDEX, NO_OFFSET, Idx, Offset
+from dexbuf.types import NO_OFFSET, Idx, Offset
 
 if TYPE_CHECKING:
     from dexbuf.debug import DebugInstruction, DebugPosition
@@ -480,7 +480,7 @@ class DebugInfoItem:
 
     line_start: int
     parameters_size: int
-    parameter_names: tuple[Idx[StringIdItem], ...]
+    parameter_names: tuple[Idx[StringIdItem] | None, ...]
     bytecode: memoryview
 
     @classmethod
@@ -489,7 +489,7 @@ class DebugInfoItem:
         line_start = cursor.read_uleb128()
         parameters_size = cursor.read_uleb128()
         parameter_names = tuple(
-            NO_INDEX if (val := cursor.read_uleb128p1()) == -1 else Idx[StringIdItem](val)
+            None if (val := cursor.read_uleb128p1()) == -1 else Idx[StringIdItem](val)
             for _ in range(parameters_size)
         )
 
@@ -518,7 +518,7 @@ class DebugInfoItem:
         return (
             encode_uleb128(self.line_start)
             + encode_uleb128(self.parameters_size)
-            + b"".join(encode_uleb128p1(p) for p in self.parameter_names)
+            + b"".join(encode_uleb128p1(-1 if p is None else p) for p in self.parameter_names)
             + bytes(self.bytecode)
         )
 
@@ -531,7 +531,7 @@ class DebugInfoItem:
             yield parse_debug_instruction(cursor)
 
     def iter_positions(
-        self, initial_source_file: Idx[StringIdItem] = NO_INDEX
+        self, initial_source_file: Idx[StringIdItem] | None = None
     ) -> Iterator[DebugPosition]:
         """Evaluate debug bytecode state machine and yield DebugPosition entries."""
         from dexbuf.debug import iter_debug_positions

@@ -5,22 +5,9 @@ Provides low-level spec representations and a tiered, REPL-friendly API.
 """
 
 from dexbuf.debug import (
-    DbgAdvanceLine,
-    DbgAdvancePc,
-    DbgEndLocal,
-    DbgEndSequence,
-    DbgRestartLocal,
-    DbgSetEpilogueBegin,
-    DbgSetFile,
-    DbgSetPrologueEnd,
-    DbgSpecial,
-    DbgStartLocal,
-    DbgStartLocalExtended,
     DebugInstruction,
     DebugOpcode,
     DebugPosition,
-    parse_debug_instruction,
-    skip_debug_instruction,
 )
 from dexbuf.instructions import IOP, Instruction, Opcode, Payload
 from dexbuf.items import (
@@ -70,17 +57,6 @@ __all__ = [
     "ClassDefItem",
     "CodeItem",
     "Count",
-    "DbgAdvanceLine",
-    "DbgAdvancePc",
-    "DbgEndLocal",
-    "DbgEndSequence",
-    "DbgRestartLocal",
-    "DbgSetEpilogueBegin",
-    "DbgSetFile",
-    "DbgSetPrologueEnd",
-    "DbgSpecial",
-    "DbgStartLocal",
-    "DbgStartLocalExtended",
     "DebugInfoItem",
     "DebugInstruction",
     "DebugOpcode",
@@ -108,6 +84,4 @@ __all__ = [
     "TypeIdItem",
     "TypeList",
     "__version__",
-    "parse_debug_instruction",
-    "skip_debug_instruction",
 ]

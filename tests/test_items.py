@@ -9,26 +9,42 @@ from typing import Any
 from dexbuf import (
     NO_INDEX,
     NO_OFFSET,
+    AnnotationItem,
+    AnnotationOffItem,
+    AnnotationsDirectoryItem,
+    AnnotationSetItem,
+    AnnotationSetRefItem,
+    AnnotationSetRefList,
+    AnnotationVisibility,
+    CallSiteIdItem,
     ClassDataItem,
     ClassDefItem,
     CodeItem,
+    EncodedAnnotation,
+    EncodedArray,
+    EncodedArrayItem,
     EncodedCatchHandler,
     EncodedCatchHandlerList,
     EncodedField,
     EncodedMethod,
     EncodedTypeAddrPair,
+    EncodedValue,
+    FieldAnnotation,
     FieldIdItem,
     Idx,
     Instruction,
+    MethodAnnotation,
     MethodIdItem,
     Offset,
     Opcode,
+    ParameterAnnotation,
     ProtoIdItem,
     StringDataItem,
     StringIdItem,
     TryItem,
     TypeIdItem,
     TypeList,
+    ValueType,
 )
 from dexbuf.cursor import Cursor
 from dexbuf.debug import (
@@ -442,9 +458,9 @@ class TestClassDefItem(unittest.TestCase):
             superclass_idx=Idx[TypeIdItem](11),
             interfaces_off=Offset[TypeList](0x0100),
             source_file_idx=Idx[StringIdItem](12),
-            annotations_off=Offset[None](0x0200),  # type: ignore[type-arg]
+            annotations_off=Offset[AnnotationsDirectoryItem](0x0200),
             class_data_off=Offset[ClassDataItem](0x0300),
-            static_values_off=Offset[None](0x0400),  # type: ignore[type-arg]
+            static_values_off=Offset[EncodedArrayItem](0x0400),
         )
         raw = item.to_bytes()
         self.assertEqual(len(raw), 32)
@@ -956,6 +972,166 @@ class TestDebugInfoItem(unittest.TestCase):
                 epilogue_begin=True,
             ),
         )
+
+
+class TestAnnotationAndArrayItems(unittest.TestCase):
+    def test_annotation_visibility(self) -> None:
+        self.assertEqual(AnnotationVisibility.BUILD, 0x00)
+        self.assertEqual(AnnotationVisibility.RUNTIME, 0x01)
+        self.assertEqual(AnnotationVisibility.SYSTEM, 0x02)
+
+    def test_encoded_array_item(self) -> None:
+        self.assertEqual(EncodedArrayItem.PADDING, 1)
+        val1 = EncodedValue(value_arg=0, value_type=ValueType.INT, value=1)
+        array = EncodedArray(size=1, values=(val1,))
+        item = EncodedArrayItem(value=array)
+
+        with self.assertRaises(FrozenInstanceError):
+            item.value = array  # type: ignore[misc]
+
+        self.assertEqual(item.__slots__, ("value",))
+        raw = item.to_bytes()
+        parsed = EncodedArrayItem.from_buffer(raw)
+        self.assertEqual(parsed, item)
+
+    def test_annotation_item(self) -> None:
+        self.assertEqual(AnnotationItem.PADDING, 1)
+        annotation = EncodedAnnotation(type_idx=Idx[TypeIdItem](1), size=0, elements=())
+        item = AnnotationItem(visibility=AnnotationVisibility.RUNTIME, annotation=annotation)
+
+        with self.assertRaises(FrozenInstanceError):
+            item.visibility = 0  # type: ignore[misc]
+
+        self.assertEqual(item.__slots__, ("visibility", "annotation"))
+        raw = item.to_bytes()
+        parsed = AnnotationItem.from_buffer(raw)
+        self.assertEqual(parsed, item)
+        self.assertEqual(parsed.visibility, AnnotationVisibility.RUNTIME)
+
+    def test_annotation_off_item(self) -> None:
+        self.assertEqual(AnnotationOffItem.STRUCT.format, "<I")
+        item = AnnotationOffItem(annotation_off=Offset[AnnotationItem](0x1000))
+
+        with self.assertRaises(FrozenInstanceError):
+            item.annotation_off = NO_OFFSET  # type: ignore[misc]
+
+        self.assertEqual(item.__slots__, ("annotation_off",))
+        raw = item.to_bytes()
+        parsed = AnnotationOffItem.from_cursor(Cursor(raw))
+        self.assertEqual(parsed, item)
+
+    def test_annotation_set_item(self) -> None:
+        self.assertEqual(AnnotationSetItem.PADDING, 4)
+        entry1 = AnnotationOffItem(annotation_off=Offset[AnnotationItem](0x100))
+        entry2 = AnnotationOffItem(annotation_off=Offset[AnnotationItem](0x200))
+        set_item = AnnotationSetItem(size=2, entries=(entry1, entry2))
+
+        with self.assertRaises(FrozenInstanceError):
+            set_item.size = 0  # type: ignore[misc]
+
+        self.assertEqual(set_item.__slots__, ("size", "entries"))
+        self.assertEqual(len(set_item), 2)
+        self.assertEqual(set_item[0], entry1)
+        self.assertEqual(list(set_item), [entry1, entry2])
+
+        raw = set_item.to_bytes()
+        parsed = AnnotationSetItem.from_buffer(raw)
+        self.assertEqual(parsed, set_item)
+
+    def test_annotation_set_ref_item(self) -> None:
+        self.assertEqual(AnnotationSetRefItem.STRUCT.format, "<I")
+        item = AnnotationSetRefItem(annotations_off=Offset[AnnotationSetItem](0x500))
+
+        with self.assertRaises(FrozenInstanceError):
+            item.annotations_off = NO_OFFSET  # type: ignore[misc]
+
+        self.assertEqual(item.__slots__, ("annotations_off",))
+        raw = item.to_bytes()
+        parsed = AnnotationSetRefItem.from_cursor(Cursor(raw))
+        self.assertEqual(parsed, item)
+
+    def test_annotation_set_ref_list(self) -> None:
+        self.assertEqual(AnnotationSetRefList.PADDING, 4)
+        ref1 = AnnotationSetRefItem(annotations_off=Offset[AnnotationSetItem](0x10))
+        ref_list = AnnotationSetRefList(size=1, list=(ref1,))
+
+        with self.assertRaises(FrozenInstanceError):
+            ref_list.size = 0  # type: ignore[misc]
+
+        self.assertEqual(ref_list.__slots__, ("size", "list"))
+        self.assertEqual(len(ref_list), 1)
+        self.assertEqual(ref_list[0], ref1)
+        self.assertEqual(list(ref_list), [ref1])
+
+        raw = ref_list.to_bytes()
+        parsed = AnnotationSetRefList.from_buffer(raw)
+        self.assertEqual(parsed, ref_list)
+
+    def test_field_method_parameter_annotation(self) -> None:
+        fa = FieldAnnotation(
+            field_idx=Idx[FieldIdItem](1), annotations_off=Offset[AnnotationSetItem](0x20)
+        )
+        ma = MethodAnnotation(
+            method_idx=Idx[MethodIdItem](2), annotations_off=Offset[AnnotationSetItem](0x30)
+        )
+        pa = ParameterAnnotation(
+            method_idx=Idx[MethodIdItem](3),
+            annotations_off=Offset[AnnotationSetRefList](0x40),
+        )
+
+        for item, cls in [
+            (fa, FieldAnnotation),
+            (ma, MethodAnnotation),
+            (pa, ParameterAnnotation),
+        ]:
+            self.assertEqual(cls.STRUCT.format, "<II")
+            raw = item.to_bytes()
+            parsed = cls.from_cursor(Cursor(raw))
+            self.assertEqual(parsed, item)
+
+    def test_annotations_directory_item(self) -> None:
+        self.assertEqual(AnnotationsDirectoryItem.PADDING, 4)
+        fa = FieldAnnotation(
+            field_idx=Idx[FieldIdItem](1), annotations_off=Offset[AnnotationSetItem](0x20)
+        )
+        ma = MethodAnnotation(
+            method_idx=Idx[MethodIdItem](2), annotations_off=Offset[AnnotationSetItem](0x30)
+        )
+        pa = ParameterAnnotation(
+            method_idx=Idx[MethodIdItem](3),
+            annotations_off=Offset[AnnotationSetRefList](0x40),
+        )
+
+        dir_item = AnnotationsDirectoryItem(
+            class_annotations_off=Offset[AnnotationSetItem](0x10),
+            fields_size=1,
+            annotated_methods_size=1,
+            annotated_parameters_size=1,
+            field_annotations=(fa,),
+            method_annotations=(ma,),
+            parameter_annotations=(pa,),
+        )
+
+        with self.assertRaises(FrozenInstanceError):
+            dir_item.fields_size = 0  # type: ignore[misc]
+
+        raw = dir_item.to_bytes()
+        parsed = AnnotationsDirectoryItem.from_buffer(raw)
+        self.assertEqual(parsed, dir_item)
+
+    def test_call_site_id_item(self) -> None:
+        self.assertEqual(CallSiteIdItem.PADDING, 4)
+        self.assertEqual(CallSiteIdItem.STRUCT.format, "<I")
+        item = CallSiteIdItem(call_site_off=Offset[EncodedArrayItem](0x1234))
+
+        with self.assertRaises(FrozenInstanceError):
+            item.call_site_off = NO_OFFSET  # type: ignore[misc]
+
+        self.assertEqual(item.__slots__, ("call_site_off",))
+        raw = item.to_bytes()
+        parsed = CallSiteIdItem.from_buffer(raw)
+        self.assertEqual(parsed, item)
+        self.assertEqual(parsed.call_site_off, Offset[EncodedArrayItem](0x1234))
 
 
 if __name__ == "__main__":

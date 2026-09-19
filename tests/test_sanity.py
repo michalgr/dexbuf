@@ -25,6 +25,8 @@ class TestSanity(unittest.TestCase):
             "ClassDefItem",
             "CodeItem",
             "Count",
+            "DebugInfoItem",
+            "DebugPosition",
             "EncodedCatchHandler",
             "EncodedCatchHandlerList",
             "EncodedField",

@@ -12,6 +12,8 @@ from dexbuf import (
     ClassDataItem,
     ClassDefItem,
     CodeItem,
+    DebugInfoItem,
+    DebugPosition,
     EncodedCatchHandler,
     EncodedCatchHandlerList,
     EncodedField,
@@ -820,6 +822,140 @@ class TestClassDataItem(unittest.TestCase):
         buf = b"HEADER" + raw
         from_buf = ClassDataItem.from_buffer(buf, Offset[ClassDataItem](6))
         self.assertEqual(from_buf, item)
+
+
+class TestDebugInfoItem(unittest.TestCase):
+    def test_padding_and_fields(self) -> None:
+        """Test DebugInfoItem PADDING class attribute and fields metadata."""
+        self.assertEqual(DebugInfoItem.PADDING, 1)
+
+        field_names = [f.name for f in dataclasses.fields(DebugInfoItem)]
+        self.assertEqual(
+            field_names, ["line_start", "parameters_size", "parameter_names", "bytecode"]
+        )
+        self.assertNotIn("PADDING", field_names)
+
+    def test_immutability_and_slots(self) -> None:
+        """Test that DebugInfoItem and DebugPosition are frozen and slotted."""
+        item = DebugInfoItem(
+            line_start=1,
+            parameters_size=0,
+            parameter_names=(),
+            bytecode=memoryview(b"\x00"),
+        )
+        with self.assertRaises(FrozenInstanceError):
+            item.line_start = 2  # type: ignore[misc]
+
+        self.assertEqual(
+            item.__slots__, ("line_start", "parameters_size", "parameter_names", "bytecode")
+        )
+
+        pos = DebugPosition(
+            address=0, line=1, source_file_idx=NO_INDEX, prologue_end=False, epilogue_begin=False
+        )
+        with self.assertRaises(FrozenInstanceError):
+            pos.address = 10  # type: ignore[misc]
+
+        self.assertEqual(
+            pos.__slots__, ("address", "line", "source_file_idx", "prologue_end", "epilogue_begin")
+        )
+
+    def test_zero_copy_bytecode_and_roundtrip_empty(self) -> None:
+        """Test parsing DebugInfoItem with empty bytecode and zero-copy slice."""
+        original = DebugInfoItem(
+            line_start=10,
+            parameters_size=0,
+            parameter_names=(),
+            bytecode=memoryview(b"\x00"),
+        )
+        raw = original.to_bytes()
+
+        cursor = Cursor(raw)
+        parsed = DebugInfoItem.from_cursor(cursor)
+
+        self.assertEqual(parsed.line_start, 10)
+        self.assertEqual(parsed.parameters_size, 0)
+        self.assertEqual(parsed.parameter_names, ())
+        self.assertIsInstance(parsed.bytecode, memoryview)
+        self.assertEqual(bytes(parsed.bytecode), b"\x00")
+        self.assertTrue(cursor.is_eof)
+
+        # Buffer offset test
+        buf = b"\x00" * 8 + raw
+        from_buf = DebugInfoItem.from_buffer(buf, Offset[DebugInfoItem](8))
+        self.assertEqual(from_buf.line_start, 10)
+        self.assertEqual(bytes(from_buf.bytecode), b"\x00")
+
+    def test_parameter_names_with_no_index(self) -> None:
+        """Test parameter names decoding with string indices and NO_INDEX."""
+        params = (Idx[StringIdItem](5), NO_INDEX, Idx[StringIdItem](12))
+        item = DebugInfoItem(
+            line_start=1,
+            parameters_size=3,
+            parameter_names=params,
+            bytecode=memoryview(b"\x00"),
+        )
+        raw = item.to_bytes()
+
+        parsed = DebugInfoItem.from_buffer(raw)
+        self.assertEqual(parsed.parameters_size, 3)
+        self.assertEqual(parsed.parameter_names, params)
+        self.assertEqual(parsed.parameter_names[1], NO_INDEX)
+
+    def test_iter_positions_state_machine(self) -> None:
+        """Test debug state machine evaluation across various debug opcodes."""
+        bytecode = (
+            b"\x07"  # DBG_SET_PROLOGUE_END
+            b"\x0a"  # Special 0x0a: line -4, addr +0 -> line 6, addr 0, prologue_end=True
+            b"\x01\x02"  # DBG_ADVANCE_PC 2 -> addr +2
+            b"\x02\x05"  # DBG_ADVANCE_LINE +5 -> line +5 (11)
+            b"\x09\x0b"  # DBG_SET_FILE StringIdItem(10) (encoded 10 -> 11)
+            b"\x19"  # Special 0x19: line -4 (7), addr +1 (3)
+            b"\x08"  # DBG_SET_EPILOGUE_BEGIN
+            b"\x0a"  # Special 0x0a: line -4 (3), addr +0 (3), epilogue_begin=True
+            b"\x03\x00\x02\x03"  # DBG_START_LOCAL reg 0, name 1, type 2
+            b"\x04\x01\x02\x03\x04"  # DBG_START_LOCAL_EXTENDED reg 1, name 1, type 2, sig 3
+            b"\x05\x00"  # DBG_END_LOCAL reg 0
+            b"\x06\x00"  # DBG_RESTART_LOCAL reg 0
+            b"\x00"  # DBG_END_SEQUENCE
+        )
+
+        item = DebugInfoItem(
+            line_start=10,
+            parameters_size=0,
+            parameter_names=(),
+            bytecode=memoryview(bytecode),
+        )
+
+        # Verify roundtrip parsing from raw bytes
+        raw = item.to_bytes()
+        parsed = DebugInfoItem.from_buffer(raw)
+        self.assertEqual(bytes(parsed.bytecode), bytecode)
+
+        # Evaluate positions state machine
+        positions = list(parsed.iter_positions(initial_source_file=Idx[StringIdItem](100)))
+        self.assertEqual(len(positions), 3)
+
+        # Position 1
+        self.assertEqual(positions[0].address, 0)
+        self.assertEqual(positions[0].line, 6)
+        self.assertEqual(positions[0].source_file_idx, Idx[StringIdItem](100))
+        self.assertTrue(positions[0].prologue_end)
+        self.assertFalse(positions[0].epilogue_begin)
+
+        # Position 2
+        self.assertEqual(positions[1].address, 3)
+        self.assertEqual(positions[1].line, 7)
+        self.assertEqual(positions[1].source_file_idx, Idx[StringIdItem](10))
+        self.assertFalse(positions[1].prologue_end)
+        self.assertFalse(positions[1].epilogue_begin)
+
+        # Position 3
+        self.assertEqual(positions[2].address, 3)
+        self.assertEqual(positions[2].line, 3)
+        self.assertEqual(positions[2].source_file_idx, Idx[StringIdItem](10))
+        self.assertFalse(positions[2].prologue_end)
+        self.assertTrue(positions[2].epilogue_begin)
 
 
 if __name__ == "__main__":

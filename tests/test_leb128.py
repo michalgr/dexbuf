@@ -4,6 +4,7 @@ import unittest
 
 from dexbuf.cursor import Cursor
 from dexbuf.leb128 import encode_sleb128, encode_uleb128, encode_uleb128p1
+from dexbuf.types import NO_INDEX
 
 
 class TestLEB128(unittest.TestCase):
@@ -46,6 +47,15 @@ class TestLEB128(unittest.TestCase):
             decoded = cursor.read_uleb128p1()
             self.assertEqual(decoded, val, f"ULEB128p1 decode mismatch for {expected_bytes!r}")
             self.assertTrue(cursor.is_eof)
+
+    def test_uleb128p1_no_index(self) -> None:
+        """Test uleb128p1 encoding with NO_INDEX."""
+        encoded = encode_uleb128p1(NO_INDEX)
+        self.assertEqual(encoded, b"\x00")
+
+        cursor = Cursor(b"\x00")
+        decoded = cursor.read_uleb128p1()
+        self.assertEqual(decoded, -1)
 
     def test_sleb128_spec_examples(self) -> None:
         """Test SLEB128 encoding and decoding with spec table examples."""

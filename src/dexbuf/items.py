@@ -6,20 +6,28 @@ See https://source.android.com/docs/core/runtime/dex-format
 import struct
 from collections.abc import Buffer, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Self, overload
+from enum import IntEnum
+from typing import TYPE_CHECKING, ClassVar, Self, overload
 
 from dexbuf.cursor import Cursor
 from dexbuf.debug import skip_debug_instruction
 from dexbuf.leb128 import encode_sleb128, encode_uleb128, encode_uleb128p1
 from dexbuf.mutf8 import encode_mutf8, utf16_code_units
 from dexbuf.types import NO_OFFSET, Idx, Offset
-from dexbuf.value import EncodedArray
+from dexbuf.value import EncodedAnnotation, EncodedArray
 
 if TYPE_CHECKING:
     from dexbuf.debug import DebugInstruction, DebugPosition
     from dexbuf.instructions import IOP
 
 __all__ = [
+    "AnnotationItem",
+    "AnnotationOffItem",
+    "AnnotationSetItem",
+    "AnnotationSetRefItem",
+    "AnnotationSetRefList",
+    "AnnotationVisibility",
+    "AnnotationsDirectoryItem",
     "CallSiteIdItem",
     "ClassDataItem",
     "ClassDefItem",
@@ -31,9 +39,12 @@ __all__ = [
     "EncodedField",
     "EncodedMethod",
     "EncodedTypeAddrPair",
+    "FieldAnnotation",
     "FieldIdItem",
+    "MethodAnnotation",
     "MethodHandleItem",
     "MethodIdItem",
+    "ParameterAnnotation",
     "ProtoIdItem",
     "StringDataItem",
     "StringIdItem",
@@ -706,6 +717,351 @@ class ClassDataItem:
         )
 
 
+class AnnotationVisibility(IntEnum):
+    """Annotation visibility levels.
+
+    See https://source.android.com/docs/core/runtime/dex-format#visibility-values
+    """
+
+    BUILD = 0x00
+    RUNTIME = 0x01
+    SYSTEM = 0x02
+
+
+@dataclass(slots=True, frozen=True)
+class AnnotationItem:
+    """Annotation item record.
+
+    See https://source.android.com/docs/core/runtime/dex-format#annotation-item
+    """
+
+    PADDING: ClassVar[int] = 1
+
+    visibility: int
+    annotation: EncodedAnnotation
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse an AnnotationItem from a Cursor."""
+        visibility = cursor.read_u8()
+        annotation = EncodedAnnotation.from_cursor(cursor)
+        return cls(visibility=visibility, annotation=annotation)
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse an AnnotationItem from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this AnnotationItem to raw DEX bytes."""
+        return bytes([self.visibility]) + self.annotation.to_bytes()
+
+
+@dataclass(slots=True, frozen=True)
+class AnnotationOffItem:
+    """Annotation offset item record.
+
+    See https://source.android.com/docs/core/runtime/dex-format#annotation-off-item
+    """
+
+    STRUCT: ClassVar[struct.Struct] = struct.Struct("<I")
+
+    annotation_off: Offset[AnnotationItem]
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse an AnnotationOffItem from a Cursor."""
+        (annotation_off,) = cursor.unpack(cls.STRUCT)
+        return cls(annotation_off=Offset[AnnotationItem](annotation_off))
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse an AnnotationOffItem from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this AnnotationOffItem to raw DEX bytes."""
+        return self.STRUCT.pack(self.annotation_off)
+
+
+@dataclass(slots=True, frozen=True)
+class AnnotationSetItem:
+    """Annotation set item record.
+
+    See https://source.android.com/docs/core/runtime/dex-format#annotation-set-item
+    """
+
+    PADDING: ClassVar[int] = 4
+    HEADER: ClassVar[struct.Struct] = struct.Struct("<I")
+
+    size: int
+    entries: tuple[AnnotationOffItem, ...]
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+    def __iter__(self) -> Iterator[AnnotationOffItem]:
+        return iter(self.entries)
+
+    @overload
+    def __getitem__(self, index: int) -> AnnotationOffItem: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[AnnotationOffItem, ...]: ...
+
+    def __getitem__(self, index: int | slice) -> AnnotationOffItem | tuple[AnnotationOffItem, ...]:
+        return self.entries[index]
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse an AnnotationSetItem from a Cursor."""
+        (size,) = cursor.unpack(cls.HEADER)
+        entries = tuple(AnnotationOffItem.from_cursor(cursor) for _ in range(size))
+        return cls(size=size, entries=entries)
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse an AnnotationSetItem from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this AnnotationSetItem to raw DEX bytes."""
+        return self.HEADER.pack(self.size) + b"".join(entry.to_bytes() for entry in self.entries)
+
+
+@dataclass(slots=True, frozen=True)
+class AnnotationSetRefItem:
+    """Annotation set reference item record.
+
+    See https://source.android.com/docs/core/runtime/dex-format#annotation-set-ref-item
+    """
+
+    STRUCT: ClassVar[struct.Struct] = struct.Struct("<I")
+
+    annotations_off: Offset[AnnotationSetItem]
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse an AnnotationSetRefItem from a Cursor."""
+        (annotations_off,) = cursor.unpack(cls.STRUCT)
+        return cls(annotations_off=Offset[AnnotationSetItem](annotations_off))
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse an AnnotationSetRefItem from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this AnnotationSetRefItem to raw DEX bytes."""
+        return self.STRUCT.pack(self.annotations_off)
+
+
+@dataclass(slots=True, frozen=True)
+class AnnotationSetRefList:
+    """Annotation set ref list record.
+
+    See https://source.android.com/docs/core/runtime/dex-format#annotation-set-ref-list
+    """
+
+    PADDING: ClassVar[int] = 4
+    HEADER: ClassVar[struct.Struct] = struct.Struct("<I")
+
+    size: int
+    list: tuple[AnnotationSetRefItem, ...]
+
+    def __len__(self) -> int:
+        return len(self.list)
+
+    def __iter__(self) -> Iterator[AnnotationSetRefItem]:
+        return iter(self.list)
+
+    @overload
+    def __getitem__(self, index: int) -> AnnotationSetRefItem: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[AnnotationSetRefItem, ...]: ...
+
+    def __getitem__(
+        self, index: int | slice
+    ) -> AnnotationSetRefItem | tuple[AnnotationSetRefItem, ...]:
+        return self.list[index]
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse an AnnotationSetRefList from a Cursor."""
+        (size,) = cursor.unpack(cls.HEADER)
+        items = tuple(AnnotationSetRefItem.from_cursor(cursor) for _ in range(size))
+        return cls(size=size, list=items)
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse an AnnotationSetRefList from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this AnnotationSetRefList to raw DEX bytes."""
+        return self.HEADER.pack(self.size) + b"".join(item.to_bytes() for item in self.list)
+
+
+@dataclass(slots=True, frozen=True)
+class FieldAnnotation:
+    """Field annotation record.
+
+    See https://source.android.com/docs/core/runtime/dex-format#field-annotation
+    """
+
+    STRUCT: ClassVar[struct.Struct] = struct.Struct("<II")
+
+    field_idx: Idx[FieldIdItem]
+    annotations_off: Offset[AnnotationSetItem]
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse a FieldAnnotation from a Cursor."""
+        field_idx, annotations_off = cursor.unpack(cls.STRUCT)
+        return cls(
+            field_idx=Idx[FieldIdItem](field_idx),
+            annotations_off=Offset[AnnotationSetItem](annotations_off),
+        )
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse a FieldAnnotation from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this FieldAnnotation to raw DEX bytes."""
+        return self.STRUCT.pack(self.field_idx, self.annotations_off)
+
+
+@dataclass(slots=True, frozen=True)
+class MethodAnnotation:
+    """Method annotation record.
+
+    See https://source.android.com/docs/core/runtime/dex-format#method-annotation
+    """
+
+    STRUCT: ClassVar[struct.Struct] = struct.Struct("<II")
+
+    method_idx: Idx[MethodIdItem]
+    annotations_off: Offset[AnnotationSetItem]
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse a MethodAnnotation from a Cursor."""
+        method_idx, annotations_off = cursor.unpack(cls.STRUCT)
+        return cls(
+            method_idx=Idx[MethodIdItem](method_idx),
+            annotations_off=Offset[AnnotationSetItem](annotations_off),
+        )
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse a MethodAnnotation from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this MethodAnnotation to raw DEX bytes."""
+        return self.STRUCT.pack(self.method_idx, self.annotations_off)
+
+
+@dataclass(slots=True, frozen=True)
+class ParameterAnnotation:
+    """Parameter annotation record.
+
+    See https://source.android.com/docs/core/runtime/dex-format#parameter-annotation
+    """
+
+    STRUCT: ClassVar[struct.Struct] = struct.Struct("<II")
+
+    method_idx: Idx[MethodIdItem]
+    annotations_off: Offset[AnnotationSetRefList]
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse a ParameterAnnotation from a Cursor."""
+        method_idx, annotations_off = cursor.unpack(cls.STRUCT)
+        return cls(
+            method_idx=Idx[MethodIdItem](method_idx),
+            annotations_off=Offset[AnnotationSetRefList](annotations_off),
+        )
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse a ParameterAnnotation from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this ParameterAnnotation to raw DEX bytes."""
+        return self.STRUCT.pack(self.method_idx, self.annotations_off)
+
+
+@dataclass(slots=True, frozen=True)
+class AnnotationsDirectoryItem:
+    """Annotations directory item record.
+
+    See https://source.android.com/docs/core/runtime/dex-format#annotations-directory-item
+    """
+
+    PADDING: ClassVar[int] = 4
+    HEADER: ClassVar[struct.Struct] = struct.Struct("<4I")
+
+    class_annotations_off: Offset[AnnotationSetItem]
+    fields_size: int
+    annotated_methods_size: int
+    annotated_parameters_size: int
+    field_annotations: tuple[FieldAnnotation, ...]
+    method_annotations: tuple[MethodAnnotation, ...]
+    parameter_annotations: tuple[ParameterAnnotation, ...]
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse an AnnotationsDirectoryItem from a Cursor."""
+        (
+            class_annotations_off,
+            fields_size,
+            annotated_methods_size,
+            annotated_parameters_size,
+        ) = cursor.unpack(cls.HEADER)
+
+        field_annotations = tuple(FieldAnnotation.from_cursor(cursor) for _ in range(fields_size))
+        method_annotations = tuple(
+            MethodAnnotation.from_cursor(cursor) for _ in range(annotated_methods_size)
+        )
+        parameter_annotations = tuple(
+            ParameterAnnotation.from_cursor(cursor) for _ in range(annotated_parameters_size)
+        )
+
+        return cls(
+            class_annotations_off=Offset[AnnotationSetItem](class_annotations_off),
+            fields_size=fields_size,
+            annotated_methods_size=annotated_methods_size,
+            annotated_parameters_size=annotated_parameters_size,
+            field_annotations=field_annotations,
+            method_annotations=method_annotations,
+            parameter_annotations=parameter_annotations,
+        )
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse an AnnotationsDirectoryItem from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this AnnotationsDirectoryItem to raw DEX bytes."""
+        return (
+            self.HEADER.pack(
+                self.class_annotations_off,
+                self.fields_size,
+                self.annotated_methods_size,
+                self.annotated_parameters_size,
+            )
+            + b"".join(f.to_bytes() for f in self.field_annotations)
+            + b"".join(m.to_bytes() for m in self.method_annotations)
+            + b"".join(p.to_bytes() for p in self.parameter_annotations)
+        )
+
+
 @dataclass(slots=True, frozen=True)
 class ClassDefItem:
     """Class definition item record representing class definition.
@@ -721,7 +1077,7 @@ class ClassDefItem:
     superclass_idx: Idx[TypeIdItem]
     interfaces_off: Offset[TypeList]
     source_file_idx: Idx[StringIdItem]
-    annotations_off: Offset[Any]
+    annotations_off: Offset[AnnotationsDirectoryItem]
     class_data_off: Offset[ClassDataItem]
     static_values_off: Offset[EncodedArrayItem]
 
@@ -744,7 +1100,7 @@ class ClassDefItem:
             superclass_idx=Idx[TypeIdItem](superclass_idx),
             interfaces_off=Offset[TypeList](interfaces_off),
             source_file_idx=Idx[StringIdItem](source_file_idx),
-            annotations_off=Offset[Any](annotations_off),
+            annotations_off=Offset[AnnotationsDirectoryItem](annotations_off),
             class_data_off=Offset[ClassDataItem](class_data_off),
             static_values_off=Offset[EncodedArrayItem](static_values_off),
         )

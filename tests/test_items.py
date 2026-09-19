@@ -9,10 +9,19 @@ from typing import Any
 from dexbuf import (
     NO_INDEX,
     NO_OFFSET,
+    AnnotationElement,
+    AnnotationItem,
+    AnnotationOffItem,
+    AnnotationsDirectoryItem,
+    AnnotationSetItem,
+    AnnotationSetRefItem,
+    AnnotationSetRefList,
+    AnnotationVisibility,
     CallSiteIdItem,
     ClassDataItem,
     ClassDefItem,
     CodeItem,
+    EncodedAnnotation,
     EncodedArray,
     EncodedArrayItem,
     EncodedCatchHandler,
@@ -21,12 +30,15 @@ from dexbuf import (
     EncodedMethod,
     EncodedTypeAddrPair,
     EncodedValue,
+    FieldAnnotation,
     FieldIdItem,
     Idx,
     Instruction,
+    MethodAnnotation,
     MethodIdItem,
     Offset,
     Opcode,
+    ParameterAnnotation,
     ProtoIdItem,
     StringDataItem,
     StringIdItem,
@@ -476,6 +488,20 @@ class TestClassDefItem(unittest.TestCase):
             static_values_off=Offset[EncodedArrayItem](0x1234),
         )
         self.assertEqual(item.static_values_off, Offset[EncodedArrayItem](0x1234))
+
+    def test_typed_annotations_off(self) -> None:
+        """Verify annotations_off is typed as Offset[AnnotationsDirectoryItem]."""
+        item = ClassDefItem(
+            class_idx=Idx[TypeIdItem](1),
+            access_flags=1,
+            superclass_idx=Idx[TypeIdItem](2),
+            interfaces_off=NO_OFFSET,
+            source_file_idx=Idx[StringIdItem](3),
+            annotations_off=Offset[AnnotationsDirectoryItem](0x5678),
+            class_data_off=NO_OFFSET,
+            static_values_off=NO_OFFSET,
+        )
+        self.assertEqual(item.annotations_off, Offset[AnnotationsDirectoryItem](0x5678))
 
     def test_no_index_and_no_offset_handling(self) -> None:
         item = ClassDefItem(
@@ -1008,6 +1034,199 @@ class TestEncodedArrayItemAndCallSiteIdItem(unittest.TestCase):
         parsed = CallSiteIdItem.from_buffer(raw)
         self.assertEqual(parsed, item)
         self.assertEqual(parsed.call_site_off, Offset[EncodedArrayItem](0x001000))
+
+
+class TestAnnotationItems(unittest.TestCase):
+    def test_annotation_visibility_enum(self) -> None:
+        """Verify AnnotationVisibility values."""
+        self.assertEqual(AnnotationVisibility.BUILD, 0x00)
+        self.assertEqual(AnnotationVisibility.RUNTIME, 0x01)
+        self.assertEqual(AnnotationVisibility.SYSTEM, 0x02)
+
+    def test_annotation_item(self) -> None:
+        """Verify AnnotationItem padding, immutability, parsing, and serialization."""
+        self.assertEqual(AnnotationItem.PADDING, 1)
+
+        val = EncodedValue(value_arg=0, value_type=ValueType.INT, value=42)
+        elem = AnnotationElement(name_idx=Idx[Any](1), value=val)
+        ann = EncodedAnnotation(type_idx=Idx[Any](10), size=1, elements=(elem,))
+        item = AnnotationItem(visibility=AnnotationVisibility.RUNTIME, annotation=ann)
+
+        with self.assertRaises(FrozenInstanceError):
+            item.visibility = AnnotationVisibility.BUILD  # type: ignore[misc]
+
+        self.assertEqual(item.__slots__, ("visibility", "annotation"))
+
+        raw = item.to_bytes()
+        parsed = AnnotationItem.from_buffer(raw)
+        self.assertEqual(parsed, item)
+        self.assertEqual(parsed.visibility, AnnotationVisibility.RUNTIME)
+
+    def test_annotation_off_item(self) -> None:
+        """Verify AnnotationOffItem struct, immutability, and roundtrip."""
+        self.assertEqual(AnnotationOffItem.STRUCT.format, "<I")
+
+        item = AnnotationOffItem(annotation_off=Offset[AnnotationItem](0x1234))
+        with self.assertRaises(FrozenInstanceError):
+            item.annotation_off = Offset[AnnotationItem](0x5678)  # type: ignore[misc]
+
+        self.assertEqual(item.__slots__, ("annotation_off",))
+
+        raw = item.to_bytes()
+        self.assertEqual(len(raw), 4)
+
+        parsed = AnnotationOffItem.from_buffer(raw)
+        self.assertEqual(parsed, item)
+
+    def test_annotation_set_item(self) -> None:
+        """Verify AnnotationSetItem padding, sequence protocol, immutability, and roundtrip."""
+        self.assertEqual(AnnotationSetItem.PADDING, 4)
+        self.assertEqual(AnnotationSetItem.HEADER.format, "<I")
+
+        entry1 = AnnotationOffItem(annotation_off=Offset[AnnotationItem](0x100))
+        entry2 = AnnotationOffItem(annotation_off=Offset[AnnotationItem](0x200))
+        set_item = AnnotationSetItem(size=2, entries=(entry1, entry2))
+
+        with self.assertRaises(FrozenInstanceError):
+            set_item.size = 1  # type: ignore[misc]
+
+        self.assertEqual(set_item.__slots__, ("size", "entries"))
+        self.assertEqual(len(set_item), 2)
+        self.assertEqual(set_item[0], entry1)
+        self.assertEqual(set_item[1], entry2)
+        self.assertEqual(set_item[0:], (entry1, entry2))
+        self.assertEqual(list(set_item), [entry1, entry2])
+
+        raw = set_item.to_bytes()
+        self.assertEqual(len(raw), 4 + 2 * 4)
+
+        parsed = AnnotationSetItem.from_buffer(raw)
+        self.assertEqual(parsed, set_item)
+
+    def test_annotation_set_ref_item(self) -> None:
+        """Verify AnnotationSetRefItem struct, immutability, and roundtrip."""
+        self.assertEqual(AnnotationSetRefItem.STRUCT.format, "<I")
+
+        item = AnnotationSetRefItem(annotations_off=Offset[AnnotationSetItem](0x300))
+        with self.assertRaises(FrozenInstanceError):
+            item.annotations_off = Offset[AnnotationSetItem](0x400)  # type: ignore[misc]
+
+        self.assertEqual(item.__slots__, ("annotations_off",))
+
+        raw = item.to_bytes()
+        self.assertEqual(len(raw), 4)
+
+        parsed = AnnotationSetRefItem.from_buffer(raw)
+        self.assertEqual(parsed, item)
+
+    def test_annotation_set_ref_list(self) -> None:
+        """Verify AnnotationSetRefList padding, sequence protocol, immutability, and roundtrip."""
+        self.assertEqual(AnnotationSetRefList.PADDING, 4)
+        self.assertEqual(AnnotationSetRefList.HEADER.format, "<I")
+
+        ref1 = AnnotationSetRefItem(annotations_off=Offset[AnnotationSetItem](0x1000))
+        ref2 = AnnotationSetRefItem(annotations_off=Offset[AnnotationSetItem](0x2000))
+        ref_list = AnnotationSetRefList(size=2, list=(ref1, ref2))
+
+        with self.assertRaises(FrozenInstanceError):
+            ref_list.size = 3  # type: ignore[misc]
+
+        self.assertEqual(ref_list.__slots__, ("size", "list"))
+        self.assertEqual(len(ref_list), 2)
+        self.assertEqual(ref_list[0], ref1)
+        self.assertEqual(ref_list[1], ref2)
+        self.assertEqual(ref_list[0:1], (ref1,))
+        self.assertEqual(list(ref_list), [ref1, ref2])
+
+        raw = ref_list.to_bytes()
+        self.assertEqual(len(raw), 4 + 2 * 4)
+
+        parsed = AnnotationSetRefList.from_buffer(raw)
+        self.assertEqual(parsed, ref_list)
+
+    def test_field_method_parameter_annotation(self) -> None:
+        """Verify FieldAnnotation, MethodAnnotation, ParameterAnnotation structs and roundtrip."""
+        self.assertEqual(FieldAnnotation.STRUCT.format, "<II")
+        self.assertEqual(MethodAnnotation.STRUCT.format, "<II")
+        self.assertEqual(ParameterAnnotation.STRUCT.format, "<II")
+
+        fa = FieldAnnotation(
+            field_idx=Idx[FieldIdItem](1),
+            annotations_off=Offset[AnnotationSetItem](0x100),
+        )
+        ma = MethodAnnotation(
+            method_idx=Idx[MethodIdItem](2),
+            annotations_off=Offset[AnnotationSetItem](0x200),
+        )
+        pa = ParameterAnnotation(
+            method_idx=Idx[MethodIdItem](3),
+            annotations_off=Offset[AnnotationSetRefList](0x300),
+        )
+
+        with self.assertRaises(FrozenInstanceError):
+            fa.field_idx = Idx[FieldIdItem](10)  # type: ignore[misc]
+        with self.assertRaises(FrozenInstanceError):
+            ma.method_idx = Idx[MethodIdItem](20)  # type: ignore[misc]
+        with self.assertRaises(FrozenInstanceError):
+            pa.method_idx = Idx[MethodIdItem](30)  # type: ignore[misc]
+
+        self.assertEqual(fa.__slots__, ("field_idx", "annotations_off"))
+        self.assertEqual(ma.__slots__, ("method_idx", "annotations_off"))
+        self.assertEqual(pa.__slots__, ("method_idx", "annotations_off"))
+
+        self.assertEqual(FieldAnnotation.from_buffer(fa.to_bytes()), fa)
+        self.assertEqual(MethodAnnotation.from_buffer(ma.to_bytes()), ma)
+        self.assertEqual(ParameterAnnotation.from_buffer(pa.to_bytes()), pa)
+
+    def test_annotations_directory_item(self) -> None:
+        """Verify AnnotationsDirectoryItem padding, struct, immutability, and roundtrip."""
+        self.assertEqual(AnnotationsDirectoryItem.PADDING, 4)
+        self.assertEqual(AnnotationsDirectoryItem.HEADER.format, "<4I")
+
+        fa = FieldAnnotation(
+            field_idx=Idx[FieldIdItem](1),
+            annotations_off=Offset[AnnotationSetItem](0x100),
+        )
+        ma = MethodAnnotation(
+            method_idx=Idx[MethodIdItem](2),
+            annotations_off=Offset[AnnotationSetItem](0x200),
+        )
+        pa = ParameterAnnotation(
+            method_idx=Idx[MethodIdItem](3),
+            annotations_off=Offset[AnnotationSetRefList](0x300),
+        )
+
+        dir_item = AnnotationsDirectoryItem(
+            class_annotations_off=Offset[AnnotationSetItem](0x500),
+            fields_size=1,
+            annotated_methods_size=1,
+            annotated_parameters_size=1,
+            field_annotations=(fa,),
+            method_annotations=(ma,),
+            parameter_annotations=(pa,),
+        )
+
+        with self.assertRaises(FrozenInstanceError):
+            dir_item.fields_size = 2  # type: ignore[misc]
+
+        self.assertEqual(
+            dir_item.__slots__,
+            (
+                "class_annotations_off",
+                "fields_size",
+                "annotated_methods_size",
+                "annotated_parameters_size",
+                "field_annotations",
+                "method_annotations",
+                "parameter_annotations",
+            ),
+        )
+
+        raw = dir_item.to_bytes()
+        self.assertEqual(len(raw), 16 + 8 + 8 + 8)
+
+        parsed = AnnotationsDirectoryItem.from_buffer(raw)
+        self.assertEqual(parsed, dir_item)
 
 
 if __name__ == "__main__":

@@ -31,6 +31,17 @@ from dexbuf import (
     TypeList,
 )
 from dexbuf.cursor import Cursor
+from dexbuf.debug import (
+    DbgAdvanceLine,
+    DbgAdvancePc,
+    DbgEndSequence,
+    DbgSetEpilogueBegin,
+    DbgSetFile,
+    DbgSetPrologueEnd,
+    DbgSpecial,
+    DebugPosition,
+)
+from dexbuf.items import DebugInfoItem
 
 
 class TestStringDataItem(unittest.TestCase):
@@ -820,6 +831,131 @@ class TestClassDataItem(unittest.TestCase):
         buf = b"HEADER" + raw
         from_buf = ClassDataItem.from_buffer(buf, Offset[ClassDataItem](6))
         self.assertEqual(from_buf, item)
+
+
+class TestDebugInfoItem(unittest.TestCase):
+    def test_padding_and_fields(self) -> None:
+        self.assertEqual(DebugInfoItem.PADDING, 1)
+
+        field_names = [f.name for f in dataclasses.fields(DebugInfoItem)]
+        expected_fields = ["line_start", "parameters_size", "parameter_names", "bytecode"]
+        self.assertEqual(field_names, expected_fields)
+        self.assertNotIn("PADDING", field_names)
+
+    def test_immutability_and_slots(self) -> None:
+        item = DebugInfoItem(
+            line_start=1,
+            parameters_size=0,
+            parameter_names=(),
+            bytecode=memoryview(b"\x00"),
+        )
+        with self.assertRaises(FrozenInstanceError):
+            item.line_start = 2  # type: ignore[misc]
+
+        self.assertEqual(
+            item.__slots__, ("line_start", "parameters_size", "parameter_names", "bytecode")
+        )
+
+    def test_zero_copy_bytecode_and_roundtrip(self) -> None:
+        # line_start=1, parameters_size=2 (param1=Idx(0), param2=NO_INDEX)
+        # bytecode: DBG_SET_FILE(1), DBG_ADVANCE_PC(2), DBG_ADVANCE_LINE(1)
+        # DBG_SET_PROLOGUE_END, DBG_SPECIAL(0x0a), DBG_END_SEQUENCE
+        # DBG_SET_FILE = 0x09 + encode_uleb128p1(1) [0x02]
+        # DBG_ADVANCE_PC = 0x01 + uleb128(2) [0x02]
+        # DBG_ADVANCE_LINE = 0x02 + sleb128(1) [0x01]
+        # DBG_SET_PROLOGUE_END = 0x07
+        # DBG_SPECIAL(0x0a) = 0x0a
+        # DBG_END_SEQUENCE = 0x00
+        bytecode_raw = b"\x09\x02\x01\x02\x02\x01\x07\x0a\x00"
+
+        item = DebugInfoItem(
+            line_start=10,
+            parameters_size=2,
+            parameter_names=(Idx[StringIdItem](0), NO_INDEX),
+            bytecode=memoryview(bytecode_raw),
+        )
+
+        raw = item.to_bytes()
+        cursor = Cursor(raw)
+        parsed = DebugInfoItem.from_cursor(cursor)
+
+        self.assertEqual(parsed.line_start, 10)
+        self.assertEqual(parsed.parameters_size, 2)
+        self.assertEqual(parsed.parameter_names, (Idx[StringIdItem](0), NO_INDEX))
+        self.assertIsInstance(parsed.bytecode, memoryview)
+        self.assertEqual(bytes(parsed.bytecode), bytecode_raw)
+        self.assertTrue(cursor.is_eof)
+
+        # Buffer roundtrip with offset
+        buf = b"\xff\xff" + raw
+        from_buf = DebugInfoItem.from_buffer(buf, Offset[DebugInfoItem](2))
+        self.assertEqual(from_buf.line_start, parsed.line_start)
+        self.assertEqual(from_buf.parameter_names, parsed.parameter_names)
+        self.assertEqual(bytes(from_buf.bytecode), bytecode_raw)
+
+    def test_iter_instructions_and_positions(self) -> None:
+        # line_start=100
+        # Bytecode ops:
+        # DBG_SET_FILE(Idx(5)) -> source_file_idx = 5
+        # DBG_SET_PROLOGUE_END -> prologue_end = True
+        # DBG_ADVANCE_PC(4) -> address += 4
+        # DBG_ADVANCE_LINE(2) -> line += 2
+        # DBG_SPECIAL(0x0a) -> line += (-4), address += 0 -> yields position
+        # DBG_SET_EPILOGUE_BEGIN -> epilogue_begin = True
+        # DBG_SPECIAL(0x19) -> line += -4, address += 1 -> yields position
+        # DBG_END_SEQUENCE -> finish
+        bytecode_raw = (
+            b"\x09\x06"  # DBG_SET_FILE (5 + 1 = 6)
+            b"\x07"  # DBG_SET_PROLOGUE_END
+            b"\x01\x04"  # DBG_ADVANCE_PC (4)
+            b"\x02\x02"  # DBG_ADVANCE_LINE (2)
+            b"\x0a"  # DBG_SPECIAL (line -4, addr 0) -> line: 100 + 2 - 4 = 98, addr: 0 + 4 + 0 = 4
+            b"\x08"  # DBG_SET_EPILOGUE_BEGIN
+            b"\x19"  # DBG_SPECIAL (line -4, addr 1) -> line: 98 - 4 = 94, addr: 4 + 1 = 5
+            b"\x00"  # DBG_END_SEQUENCE
+        )
+
+        item = DebugInfoItem(
+            line_start=100,
+            parameters_size=0,
+            parameter_names=(),
+            bytecode=memoryview(bytecode_raw),
+        )
+
+        instructions = list(item.iter_instructions())
+        self.assertEqual(len(instructions), 8)
+        self.assertIsInstance(instructions[0], DbgSetFile)
+        self.assertIsInstance(instructions[1], DbgSetPrologueEnd)
+        self.assertIsInstance(instructions[2], DbgAdvancePc)
+        self.assertIsInstance(instructions[3], DbgAdvanceLine)
+        self.assertIsInstance(instructions[4], DbgSpecial)
+        self.assertIsInstance(instructions[5], DbgSetEpilogueBegin)
+        self.assertIsInstance(instructions[6], DbgSpecial)
+        self.assertIsInstance(instructions[7], DbgEndSequence)
+
+        positions = list(item.iter_positions(initial_source_file=NO_INDEX))
+        self.assertEqual(len(positions), 2)
+
+        self.assertEqual(
+            positions[0],
+            DebugPosition(
+                address=4,
+                line=98,
+                source_file_idx=Idx[StringIdItem](5),
+                prologue_end=True,
+                epilogue_begin=False,
+            ),
+        )
+        self.assertEqual(
+            positions[1],
+            DebugPosition(
+                address=5,
+                line=94,
+                source_file_idx=Idx[StringIdItem](5),
+                prologue_end=False,
+                epilogue_begin=True,
+            ),
+        )
 
 
 if __name__ == "__main__":

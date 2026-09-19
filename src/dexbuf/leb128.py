@@ -3,6 +3,8 @@
 See https://source.android.com/docs/core/runtime/dex-format#leb128
 """
 
+from dexbuf.types import NO_INDEX
+
 __all__ = [
     "encode_sleb128",
     "encode_uleb128",
@@ -33,8 +35,12 @@ def encode_uleb128(value: int) -> bytes:
 def encode_uleb128p1(value: int) -> bytes:
     """Encode an integer as uleb128p1 (value + 1 encoded as uleb128).
 
+    When value is NO_INDEX (0xFFFF_FFFF) or -1, encodes as encode_uleb128(0) (b"\\x00").
+
     See https://source.android.com/docs/core/runtime/dex-format#leb128
     """
+    if value in (-1, NO_INDEX):
+        return encode_uleb128(0)
     return encode_uleb128(value + 1)
 
 

@@ -857,7 +857,7 @@ class TestDebugInfoItem(unittest.TestCase):
         )
 
     def test_zero_copy_bytecode_and_roundtrip(self) -> None:
-        # line_start=1, parameters_size=2 (param1=Idx(0), param2=NO_INDEX)
+        # line_start=1, parameters_size=2 (param1=Idx(0), param2=None)
         # bytecode: DBG_SET_FILE(1), DBG_ADVANCE_PC(2), DBG_ADVANCE_LINE(1)
         # DBG_SET_PROLOGUE_END, DBG_SPECIAL(0x0a), DBG_END_SEQUENCE
         # DBG_SET_FILE = 0x09 + encode_uleb128p1(1) [0x02]
@@ -871,7 +871,7 @@ class TestDebugInfoItem(unittest.TestCase):
         item = DebugInfoItem(
             line_start=10,
             parameters_size=2,
-            parameter_names=(Idx[StringIdItem](0), NO_INDEX),
+            parameter_names=(Idx[StringIdItem](0), None),
             bytecode=memoryview(bytecode_raw),
         )
 
@@ -881,7 +881,7 @@ class TestDebugInfoItem(unittest.TestCase):
 
         self.assertEqual(parsed.line_start, 10)
         self.assertEqual(parsed.parameters_size, 2)
-        self.assertEqual(parsed.parameter_names, (Idx[StringIdItem](0), NO_INDEX))
+        self.assertEqual(parsed.parameter_names, (Idx[StringIdItem](0), None))
         self.assertIsInstance(parsed.bytecode, memoryview)
         self.assertEqual(bytes(parsed.bytecode), bytecode_raw)
         self.assertTrue(cursor.is_eof)
@@ -933,7 +933,7 @@ class TestDebugInfoItem(unittest.TestCase):
         self.assertIsInstance(instructions[6], DbgSpecial)
         self.assertIsInstance(instructions[7], DbgEndSequence)
 
-        positions = list(item.iter_positions(initial_source_file=NO_INDEX))
+        positions = list(item.iter_positions(initial_source_file=None))
         self.assertEqual(len(positions), 2)
 
         self.assertEqual(

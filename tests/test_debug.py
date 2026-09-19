@@ -86,31 +86,29 @@ class TestDebugInstructions(unittest.TestCase):
             self.assertEqual(encoded, raw)
 
     def test_no_index_handling(self) -> None:
-        """Verify NO_INDEX handling when string/type index is encoded as 0 (uleb128p1 value -1)."""
-        # DbgStartLocal with NO_INDEX for name and type
+        """Verify None handling when string/type index is encoded as 0 (uleb128p1 value -1)."""
+        # DbgStartLocal with None for name and type
         raw = b"\x03\x01\x00\x00"
         c = Cursor(raw)
         inst = parse_debug_instruction(c)
-        self.assertEqual(inst, DbgStartLocal(register_num=1, name_idx=NO_INDEX, type_idx=NO_INDEX))
+        self.assertEqual(inst, DbgStartLocal(register_num=1, name_idx=None, type_idx=None))
         self.assertEqual(inst.to_bytes(), raw)
 
-        # DbgStartLocalExtended with NO_INDEX for sig
+        # DbgStartLocalExtended with None for sig
         raw_ext = b"\x04\x01\x02\x03\x00"
         c_ext = Cursor(raw_ext)
         inst_ext = parse_debug_instruction(c_ext)
         self.assertEqual(
             inst_ext,
-            DbgStartLocalExtended(
-                register_num=1, name_idx=Idx(1), type_idx=Idx(2), sig_idx=NO_INDEX
-            ),
+            DbgStartLocalExtended(register_num=1, name_idx=Idx(1), type_idx=Idx(2), sig_idx=None),
         )
         self.assertEqual(inst_ext.to_bytes(), raw_ext)
 
-        # DbgSetFile with NO_INDEX
+        # DbgSetFile with None
         raw_file = b"\x09\x00"
         c_file = Cursor(raw_file)
         inst_file = parse_debug_instruction(c_file)
-        self.assertEqual(inst_file, DbgSetFile(name_idx=NO_INDEX))
+        self.assertEqual(inst_file, DbgSetFile(name_idx=None))
         self.assertEqual(inst_file.to_bytes(), raw_file)
 
     def test_dataclasses_slots_and_frozen(self) -> None:
@@ -123,7 +121,7 @@ class TestDebugInstructions(unittest.TestCase):
         pos = DebugPosition(
             address=0,
             line=1,
-            source_file_idx=NO_INDEX,
+            source_file_idx=None,
             prologue_end=False,
             epilogue_begin=False,
         )
@@ -138,7 +136,7 @@ class TestDebugStateMachine(unittest.TestCase):
         sm = DebugStateMachine(line=10)
         self.assertEqual(sm.line, 10)
         self.assertEqual(sm.address, 0)
-        self.assertEqual(sm.source_file_idx, NO_INDEX)
+        self.assertIsNone(sm.source_file_idx)
         self.assertFalse(sm.prologue_end)
         self.assertFalse(sm.epilogue_begin)
 
@@ -216,6 +214,18 @@ class TestDebugStateMachine(unittest.TestCase):
         )
         # Verify epilogue_begin was reset
         self.assertFalse(sm.epilogue_begin)
+
+    def test_iter_debug_positions_initial_source_file_no_index_normalization(self) -> None:
+        """Verify initial_source_file=NO_INDEX is normalized to None."""
+        instructions = [
+            DbgAdvancePc(5),
+            DbgSpecial(0x0E),
+        ]
+        positions = list(
+            iter_debug_positions(instructions, line_start=10, initial_source_file=NO_INDEX)
+        )
+        self.assertEqual(len(positions), 1)
+        self.assertIsNone(positions[0].source_file_idx)
 
     def test_iter_debug_positions(self) -> None:
         """Verify iter_debug_positions evaluates a list of DebugInstructions."""

@@ -9,11 +9,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Self, overload
 
 from dexbuf.cursor import Cursor
-from dexbuf.leb128 import encode_sleb128, encode_uleb128
+from dexbuf.debug import skip_debug_instruction
+from dexbuf.leb128 import encode_sleb128, encode_uleb128, encode_uleb128p1
 from dexbuf.mutf8 import encode_mutf8, utf16_code_units
-from dexbuf.types import NO_OFFSET, Idx, Offset
+from dexbuf.types import NO_INDEX, NO_OFFSET, Idx, Offset
 
 if TYPE_CHECKING:
+    from dexbuf.debug import DebugInstruction, DebugPosition
     from dexbuf.instructions import IOP
 
 __all__ = [
@@ -21,6 +23,7 @@ __all__ = [
     "ClassDataItem",
     "ClassDefItem",
     "CodeItem",
+    "DebugInfoItem",
     "EncodedCatchHandler",
     "EncodedCatchHandlerList",
     "EncodedField",
@@ -467,6 +470,112 @@ class EncodedCatchHandlerList:
 
 
 @dataclass(slots=True, frozen=True)
+class DebugInfoItem:
+    """Debug info item record containing position and local variable debug bytecode.
+
+    See https://source.android.com/docs/core/runtime/dex-format#debug-info-item
+    """
+
+    PADDING: ClassVar[int] = 1
+
+    line_start: int
+    parameters_size: int
+    parameter_names: tuple[Idx[StringIdItem], ...]
+    bytecode: memoryview
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse a DebugInfoItem from a Cursor using zero-allocation bytecode scanning."""
+        line_start = cursor.read_uleb128()
+        parameters_size = cursor.read_uleb128()
+        parameter_names = tuple(
+            NO_INDEX if (val := cursor.read_uleb128p1()) == -1 else Idx[StringIdItem](val)
+            for _ in range(parameters_size)
+        )
+
+        bytecode_start = cursor.tell()
+        while True:
+            opcode = skip_debug_instruction(cursor)
+            if opcode == 0x00:  # DBG_END_SEQUENCE
+                break
+        bytecode_end = cursor.tell()
+        bytecode = cursor.subcursor(bytecode_start, bytecode_end - bytecode_start)._buffer
+
+        return cls(
+            line_start=line_start,
+            parameters_size=parameters_size,
+            parameter_names=parameter_names,
+            bytecode=bytecode,
+        )
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse a DebugInfoItem from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this DebugInfoItem to raw DEX bytes."""
+        return (
+            encode_uleb128(self.line_start)
+            + encode_uleb128(self.parameters_size)
+            + b"".join(encode_uleb128p1(p) for p in self.parameter_names)
+            + bytes(self.bytecode)
+        )
+
+    def iter_instructions(self) -> Iterator[DebugInstruction]:
+        """Iterate over parsed Dalvik debug instructions lazily."""
+        from dexbuf.debug import parse_debug_instruction
+
+        cursor = Cursor(self.bytecode)
+        while not cursor.is_eof:
+            yield parse_debug_instruction(cursor)
+
+    def iter_positions(
+        self, initial_source_file: Idx[StringIdItem] = NO_INDEX
+    ) -> Iterator[DebugPosition]:
+        """Evaluate debug bytecode state machine and yield DebugPosition entries."""
+        from dexbuf.debug import (
+            DbgAdvanceLine,
+            DbgAdvancePc,
+            DbgSetEpilogueBegin,
+            DbgSetFile,
+            DbgSetPrologueEnd,
+            DbgSpecial,
+            DebugPosition,
+        )
+
+        address = 0
+        line = self.line_start
+        source_file_idx = initial_source_file
+        prologue_end = False
+        epilogue_begin = False
+
+        for inst in self.iter_instructions():
+            if isinstance(inst, DbgAdvancePc):
+                address += inst.addr_diff
+            elif isinstance(inst, DbgAdvanceLine):
+                line += inst.line_diff
+            elif isinstance(inst, DbgSetPrologueEnd):
+                prologue_end = True
+            elif isinstance(inst, DbgSetEpilogueBegin):
+                epilogue_begin = True
+            elif isinstance(inst, DbgSetFile):
+                source_file_idx = inst.name_idx
+            elif isinstance(inst, DbgSpecial):
+                line += inst.line_diff
+                address += inst.addr_diff
+                yield DebugPosition(
+                    address=address,
+                    line=line,
+                    source_file_idx=source_file_idx,
+                    prologue_end=prologue_end,
+                    epilogue_begin=epilogue_begin,
+                )
+                prologue_end = False
+                epilogue_begin = False
+
+
+@dataclass(slots=True, frozen=True)
 class CodeItem:
     """Code item record representing method execution header, bytecode, and try/catch data.
 
@@ -480,7 +589,7 @@ class CodeItem:
     ins_size: int
     outs_size: int
     tries_size: int
-    debug_info_off: Offset[Any]
+    debug_info_off: Offset[DebugInfoItem]
     insns_size: int
     insns: memoryview
     tries: tuple[TryItem, ...]
@@ -514,7 +623,7 @@ class CodeItem:
             ins_size=ins_size,
             outs_size=outs_size,
             tries_size=tries_size,
-            debug_info_off=Offset[Any](debug_info_off),
+            debug_info_off=Offset[DebugInfoItem](debug_info_off),
             insns_size=insns_size,
             insns=insns,
             tries=tries,

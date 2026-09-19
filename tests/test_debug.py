@@ -17,6 +17,8 @@ from dexbuf.debug import (
     DbgStartLocalExtended,
     DebugOpcode,
     DebugPosition,
+    DebugStateMachine,
+    iter_debug_positions,
     parse_debug_instruction,
     skip_debug_instruction,
 )
@@ -128,6 +130,126 @@ class TestDebugInstructions(unittest.TestCase):
         self.assertTrue(hasattr(pos, "__slots__"))
         with self.assertRaises(AttributeError):
             pos.address = 5  # type: ignore[misc]
+
+
+class TestDebugStateMachine(unittest.TestCase):
+    def test_state_machine_initialization(self) -> None:
+        """Verify default and initial state machine values."""
+        sm = DebugStateMachine(line=10)
+        self.assertEqual(sm.line, 10)
+        self.assertEqual(sm.address, 0)
+        self.assertEqual(sm.source_file_idx, NO_INDEX)
+        self.assertFalse(sm.prologue_end)
+        self.assertFalse(sm.epilogue_begin)
+
+        sm_custom = DebugStateMachine(
+            line=42,
+            address=10,
+            source_file_idx=Idx(7),
+            prologue_end=True,
+            epilogue_begin=True,
+        )
+        self.assertEqual(sm_custom.line, 42)
+        self.assertEqual(sm_custom.address, 10)
+        self.assertEqual(sm_custom.source_file_idx, Idx(7))
+        self.assertTrue(sm_custom.prologue_end)
+        self.assertTrue(sm_custom.epilogue_begin)
+
+    def test_step_non_emitting_instructions(self) -> None:
+        """Verify step updates registers/flags and returns None for non-emitting instructions."""
+        sm = DebugStateMachine(line=10)
+
+        self.assertIsNone(sm.step(DbgAdvancePc(4)))
+        self.assertEqual(sm.address, 4)
+
+        self.assertIsNone(sm.step(DbgAdvanceLine(5)))
+        self.assertEqual(sm.line, 15)
+
+        self.assertIsNone(sm.step(DbgSetPrologueEnd()))
+        self.assertTrue(sm.prologue_end)
+
+        self.assertIsNone(sm.step(DbgSetEpilogueBegin()))
+        self.assertTrue(sm.epilogue_begin)
+
+        self.assertIsNone(sm.step(DbgSetFile(Idx(12))))
+        self.assertEqual(sm.source_file_idx, Idx(12))
+
+        # Other instructions (e.g. locals, end sequence) should also return None without error
+        self.assertIsNone(sm.step(DbgStartLocal(0, Idx(1), Idx(2))))
+        self.assertIsNone(sm.step(DbgEndSequence()))
+
+    def test_step_special_instruction(self) -> None:
+        """Verify step emits DebugPosition and resets prologue/epilogue flags on DbgSpecial."""
+        sm = DebugStateMachine(line=100, source_file_idx=Idx(5))
+
+        sm.step(DbgAdvancePc(2))
+        sm.step(DbgSetPrologueEnd())
+
+        # DbgSpecial(0x0A): line_diff = -4, addr_diff = 0
+        pos1 = sm.step(DbgSpecial(0x0A))
+        self.assertEqual(
+            pos1,
+            DebugPosition(
+                address=2,
+                line=96,
+                source_file_idx=Idx(5),
+                prologue_end=True,
+                epilogue_begin=False,
+            ),
+        )
+        # Verify prologue_end was reset
+        self.assertFalse(sm.prologue_end)
+        self.assertFalse(sm.epilogue_begin)
+
+        sm.step(DbgSetEpilogueBegin())
+        # DbgSpecial(0x19): line_diff = -4, addr_diff = 1
+        pos2 = sm.step(DbgSpecial(0x19))
+        self.assertEqual(
+            pos2,
+            DebugPosition(
+                address=3,
+                line=92,
+                source_file_idx=Idx(5),
+                prologue_end=False,
+                epilogue_begin=True,
+            ),
+        )
+        # Verify epilogue_begin was reset
+        self.assertFalse(sm.epilogue_begin)
+
+    def test_iter_debug_positions(self) -> None:
+        """Verify iter_debug_positions evaluates a list of DebugInstructions."""
+        instructions = [
+            DbgSetFile(Idx(10)),
+            DbgAdvancePc(10),
+            DbgAdvanceLine(2),
+            DbgSetPrologueEnd(),
+            DbgSpecial(0x0E),  # line_diff = 0, addr_diff = 0
+            DbgSpecial(0x19),  # line_diff = -4, addr_diff = 1
+        ]
+
+        positions = list(iter_debug_positions(instructions, line_start=20))
+        self.assertEqual(len(positions), 2)
+        self.assertEqual(
+            positions[0],
+            DebugPosition(
+                address=10,
+                line=22,
+                source_file_idx=Idx(10),
+                prologue_end=True,
+                epilogue_begin=False,
+            ),
+        )
+        self.assertEqual(
+            positions[1],
+            DebugPosition(
+                address=11,
+                line=18,
+                source_file_idx=Idx(10),
+                prologue_end=False,
+                epilogue_begin=False,
+            ),
+        )
 
 
 if __name__ == "__main__":

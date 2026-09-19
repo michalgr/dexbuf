@@ -534,45 +534,13 @@ class DebugInfoItem:
         self, initial_source_file: Idx[StringIdItem] = NO_INDEX
     ) -> Iterator[DebugPosition]:
         """Evaluate debug bytecode state machine and yield DebugPosition entries."""
-        from dexbuf.debug import (
-            DbgAdvanceLine,
-            DbgAdvancePc,
-            DbgSetEpilogueBegin,
-            DbgSetFile,
-            DbgSetPrologueEnd,
-            DbgSpecial,
-            DebugPosition,
+        from dexbuf.debug import iter_debug_positions
+
+        return iter_debug_positions(
+            self.iter_instructions(),
+            line_start=self.line_start,
+            initial_source_file=initial_source_file,
         )
-
-        address = 0
-        line = self.line_start
-        source_file_idx = initial_source_file
-        prologue_end = False
-        epilogue_begin = False
-
-        for inst in self.iter_instructions():
-            if isinstance(inst, DbgAdvancePc):
-                address += inst.addr_diff
-            elif isinstance(inst, DbgAdvanceLine):
-                line += inst.line_diff
-            elif isinstance(inst, DbgSetPrologueEnd):
-                prologue_end = True
-            elif isinstance(inst, DbgSetEpilogueBegin):
-                epilogue_begin = True
-            elif isinstance(inst, DbgSetFile):
-                source_file_idx = inst.name_idx
-            elif isinstance(inst, DbgSpecial):
-                line += inst.line_diff
-                address += inst.addr_diff
-                yield DebugPosition(
-                    address=address,
-                    line=line,
-                    source_file_idx=source_file_idx,
-                    prologue_end=prologue_end,
-                    epilogue_begin=epilogue_begin,
-                )
-                prologue_end = False
-                epilogue_begin = False
 
 
 @dataclass(slots=True, frozen=True)

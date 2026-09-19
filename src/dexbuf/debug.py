@@ -3,6 +3,7 @@
 See https://source.android.com/docs/core/runtime/dex-format#debug-info-item
 """
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, Self
@@ -29,6 +30,8 @@ __all__ = [
     "DebugInstruction",
     "DebugOpcode",
     "DebugPosition",
+    "DebugStateMachine",
+    "iter_debug_positions",
     "parse_debug_instruction",
     "skip_debug_instruction",
 ]
@@ -437,3 +440,53 @@ def parse_debug_instruction(cursor: Cursor) -> DebugInstruction:
         return DbgSetFile.from_cursor(cursor)
     else:
         return DbgSpecial.from_cursor(cursor, opcode)
+
+
+@dataclass(slots=True)
+class DebugStateMachine:
+    """State machine evaluating Dalvik debug bytecode instructions."""
+
+    line: int
+    address: int = 0
+    source_file_idx: Idx[StringIdItem] = NO_INDEX
+    prologue_end: bool = False
+    epilogue_begin: bool = False
+
+    def step(self, inst: DebugInstruction) -> DebugPosition | None:
+        """Advance state machine by one instruction and return DebugPosition if emitted."""
+        if isinstance(inst, DbgAdvancePc):
+            self.address += inst.addr_diff
+        elif isinstance(inst, DbgAdvanceLine):
+            self.line += inst.line_diff
+        elif isinstance(inst, DbgSetPrologueEnd):
+            self.prologue_end = True
+        elif isinstance(inst, DbgSetEpilogueBegin):
+            self.epilogue_begin = True
+        elif isinstance(inst, DbgSetFile):
+            self.source_file_idx = inst.name_idx
+        elif isinstance(inst, DbgSpecial):
+            self.line += inst.line_diff
+            self.address += inst.addr_diff
+            pos = DebugPosition(
+                address=self.address,
+                line=self.line,
+                source_file_idx=self.source_file_idx,
+                prologue_end=self.prologue_end,
+                epilogue_begin=self.epilogue_begin,
+            )
+            self.prologue_end = False
+            self.epilogue_begin = False
+            return pos
+        return None
+
+
+def iter_debug_positions(
+    instructions: Iterable[DebugInstruction],
+    line_start: int,
+    initial_source_file: Idx[StringIdItem] = NO_INDEX,
+) -> Iterator[DebugPosition]:
+    """Evaluate debug bytecode state machine over instructions and yield DebugPosition entries."""
+    state = DebugStateMachine(line=line_start, source_file_idx=initial_source_file)
+    for inst in instructions:
+        if (pos := state.step(inst)) is not None:
+            yield pos

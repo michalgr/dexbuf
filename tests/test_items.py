@@ -36,6 +36,10 @@ from dexbuf import (
     HiddenapiRestrictionFlag,
     Idx,
     Instruction,
+    ItemType,
+    MapItem,
+    MapItemType,
+    MapList,
     MethodAnnotation,
     MethodIdItem,
     Offset,
@@ -1319,6 +1323,130 @@ class TestHiddenapiClassDataItem(unittest.TestCase):
         cursor = Cursor(invalid_bytes)
         with self.assertRaises(ValueError):
             HiddenapiClassDataItem.from_cursor(cursor)
+
+
+class TestMapListAndItems(unittest.TestCase):
+    def test_item_type_enum_and_alias(self) -> None:
+        """Verify ItemType DEX section type codes and MapItemType alias."""
+        self.assertIs(MapItemType, ItemType)
+
+        expected_values = {
+            "HEADER_ITEM": 0x0000,
+            "STRING_ID_ITEM": 0x0001,
+            "TYPE_ID_ITEM": 0x0002,
+            "PROTO_ID_ITEM": 0x0003,
+            "FIELD_ID_ITEM": 0x0004,
+            "METHOD_ID_ITEM": 0x0005,
+            "CLASS_DEF_ITEM": 0x0006,
+            "CALL_SITE_ID_ITEM": 0x0007,
+            "METHOD_HANDLE_ITEM": 0x0008,
+            "MAP_LIST": 0x1000,
+            "TYPE_LIST": 0x1001,
+            "ANNOTATION_SET_REF_LIST": 0x1002,
+            "ANNOTATION_SET_ITEM": 0x1003,
+            "CLASS_DATA_ITEM": 0x2000,
+            "CODE_ITEM": 0x2001,
+            "STRING_DATA_ITEM": 0x2002,
+            "DEBUG_INFO_ITEM": 0x2003,
+            "ANNOTATION_ITEM": 0x2004,
+            "ENCODED_ARRAY_ITEM": 0x2005,
+            "ANNOTATIONS_DIRECTORY_ITEM": 0x2006,
+            "HIDDENAPI_CLASS_DATA_ITEM": 0xF000,
+        }
+
+        self.assertEqual(len(ItemType), 21)
+        for name, expected_val in expected_values.items():
+            member = getattr(ItemType, name)
+            self.assertEqual(member, expected_val)
+            self.assertEqual(member.value, expected_val)
+
+    def test_map_item_attributes_slots_immutability(self) -> None:
+        """Verify MapItem padding, struct format, slots, default unused, and immutability."""
+        self.assertEqual(MapItem.PADDING, 4)
+        self.assertEqual(MapItem.STRUCT.format, "<HHII")
+
+        item = MapItem(item_type=ItemType.HEADER_ITEM, size=1, offset=Offset[Any](0))
+        self.assertEqual(item.item_type, 0x0000)
+        self.assertEqual(item.size, 1)
+        self.assertEqual(item.offset, Offset[Any](0))
+        self.assertEqual(item.unused, 0)
+
+        with self.assertRaises(FrozenInstanceError):
+            item.item_type = ItemType.STRING_ID_ITEM  # type: ignore[misc]
+
+        self.assertEqual(item.__slots__, ("item_type", "size", "offset", "unused"))
+
+    def test_map_item_roundtrip_and_buffer(self) -> None:
+        """Verify MapItem serialization roundtrip and buffer parsing."""
+        item = MapItem(
+            item_type=ItemType.STRING_ID_ITEM,
+            size=10,
+            offset=Offset[Any](0x100),
+            unused=0,
+        )
+        raw = item.to_bytes()
+        self.assertEqual(len(raw), 12)
+
+        cursor = Cursor(raw)
+        parsed = MapItem.from_cursor(cursor)
+        self.assertEqual(parsed, item)
+
+        buf = b"\x00" * 8 + raw
+        from_buf = MapItem.from_buffer(buf, Offset[MapItem](8))
+        self.assertEqual(from_buf, item)
+
+    def test_map_list(self) -> None:
+        """Verify MapList padding, header, size property, collection interface, and get lookup."""
+        self.assertEqual(MapList.PADDING, 4)
+        self.assertEqual(MapList.HEADER.format, "<I")
+        self.assertIs(MapList.Item, MapItem)
+
+        # Empty MapList
+        empty = MapList(list=())
+        self.assertEqual(empty.size, 0)
+        self.assertEqual(len(empty), 0)
+        self.assertEqual(list(empty), [])
+        self.assertIsNone(empty.get(ItemType.HEADER_ITEM))
+
+        raw_empty = empty.to_bytes()
+        self.assertEqual(raw_empty, struct.pack("<I", 0))
+        self.assertEqual(MapList.from_buffer(raw_empty), empty)
+
+        # Multi-item MapList
+        item1 = MapItem(item_type=ItemType.HEADER_ITEM, size=1, offset=Offset[Any](0))
+        item2 = MapItem(item_type=ItemType.STRING_ID_ITEM, size=5, offset=Offset[Any](0x70))
+        item3 = MapItem(item_type=ItemType.TYPE_ID_ITEM, size=2, offset=Offset[Any](0x84))
+
+        map_list = MapList(list=(item1, item2, item3))
+
+        self.assertEqual(map_list.size, 3)
+        self.assertEqual(len(map_list), 3)
+        self.assertEqual(map_list[0], item1)
+        self.assertEqual(map_list[1], item2)
+        self.assertEqual(map_list[1:], (item2, item3))
+        self.assertEqual(list(map_list), [item1, item2, item3])
+
+        # Property immutability
+        with self.assertRaises((TypeError, AttributeError)):
+            map_list.size = 10  # type: ignore[misc]
+
+        # Get lookup by ItemType and int
+        self.assertEqual(map_list.get(ItemType.HEADER_ITEM), item1)
+        self.assertEqual(map_list.get(0x0001), item2)
+        self.assertEqual(map_list.get(ItemType.STRING_ID_ITEM), item2)
+        self.assertIsNone(map_list.get(ItemType.CLASS_DEF_ITEM))
+
+        # Roundtrip
+        raw = map_list.to_bytes()
+        self.assertEqual(len(raw), 4 + 3 * 12)
+
+        cursor = Cursor(raw)
+        parsed = MapList.from_cursor(cursor)
+        self.assertEqual(parsed, map_list)
+
+        buf = b"PADDING_" + raw
+        from_buf = MapList.from_buffer(buf, Offset[MapList](8))
+        self.assertEqual(from_buf, map_list)
 
 
 if __name__ == "__main__":

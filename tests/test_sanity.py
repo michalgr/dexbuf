@@ -49,6 +49,8 @@ class TestSanity(unittest.TestCase):
             "FieldAnnotation",
             "FieldIdItem",
             "Hat",
+            "HiddenapiClassDataItem",
+            "HiddenapiRestrictionFlag",
             "Idx",
             "Instruction",
             "Literal",

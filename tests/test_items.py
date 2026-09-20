@@ -32,6 +32,8 @@ from dexbuf import (
     EncodedValue,
     FieldAnnotation,
     FieldIdItem,
+    HiddenapiClassDataItem,
+    HiddenapiRestrictionFlag,
     Idx,
     Instruction,
     MethodAnnotation,
@@ -1203,6 +1205,120 @@ class TestAnnotationItems(unittest.TestCase):
 
         parsed = AnnotationsDirectoryItem.from_buffer(raw)
         self.assertEqual(parsed, dir_item)
+
+
+class TestHiddenapiClassDataItem(unittest.TestCase):
+    def test_restriction_flag_enum(self) -> None:
+        """Verify HiddenapiRestrictionFlag enum values."""
+        self.assertEqual(HiddenapiRestrictionFlag.WHITELIST, 0)
+        self.assertEqual(HiddenapiRestrictionFlag.GREYLIST, 1)
+        self.assertEqual(HiddenapiRestrictionFlag.BLACKLIST, 2)
+        self.assertEqual(HiddenapiRestrictionFlag.GREYLIST_MAX_O, 3)
+        self.assertEqual(HiddenapiRestrictionFlag.GREYLIST_MAX_P, 4)
+        self.assertEqual(HiddenapiRestrictionFlag.GREYLIST_MAX_Q, 5)
+        self.assertEqual(HiddenapiRestrictionFlag.GREYLIST_MAX_R, 6)
+
+    def test_padding_and_fields(self) -> None:
+        """Verify PADDING class attribute, slots, and frozen immutability."""
+        self.assertEqual(HiddenapiClassDataItem.PADDING, 4)
+
+        item = HiddenapiClassDataItem(data=memoryview(b"\x00" * 8))
+        with self.assertRaises(FrozenInstanceError):
+            item.data = memoryview(b"")  # type: ignore[misc]
+
+        with self.assertRaises((TypeError, AttributeError)):
+            item.size = 10  # type: ignore[misc]
+
+        self.assertEqual(item.__slots__, ("data",))
+
+        field_names = [f.name for f in dataclasses.fields(HiddenapiClassDataItem)]
+        self.assertEqual(field_names, ["data"])
+
+    def test_from_class_flags_factory_and_access_api(self) -> None:
+        """Verify creation via from_class_flags and query methods."""
+        class_flags_input = [
+            None,  # class 0: default 0 offset
+            [0, 0],  # class 1: all zeros -> offset 0
+            [
+                HiddenapiRestrictionFlag.GREYLIST,
+                HiddenapiRestrictionFlag.GREYLIST_MAX_P,
+            ],  # class 2: non-zero flags (1, 4)
+            [
+                HiddenapiRestrictionFlag.WHITELIST,
+                HiddenapiRestrictionFlag.BLACKLIST,
+                HiddenapiRestrictionFlag.GREYLIST_MAX_R,
+            ],  # class 3: flags (0, 2, 6)
+        ]
+
+        item = HiddenapiClassDataItem.from_class_flags(class_flags_input)
+
+        # Offsets table size = 4 classes * 4 bytes = 16 bytes.
+        # Header = 4 bytes. Total section size = 4 + len(item.data)
+        self.assertEqual(item.size, 4 + len(item.data))
+
+        # Class 0: offset 0 -> whitelist defaults
+        self.assertEqual(item.get_offset(0), 0)
+        self.assertEqual(item.get_flags(0, count=3), (0, 0, 0))
+
+        # Class 1: offset 0 (all zeros input)
+        self.assertEqual(item.get_offset(1), 0)
+        self.assertEqual(item.get_flags(1, count=2), (0, 0))
+
+        # Class 2: non-zero offset
+        off2 = item.get_offset(2)
+        self.assertGreater(off2, 0)
+        self.assertEqual(item.get_flags(2, count=2), (1, 4))
+        self.assertEqual(
+            list(item.iter_flags(2, count=2)),
+            [HiddenapiRestrictionFlag.GREYLIST, HiddenapiRestrictionFlag.GREYLIST_MAX_P],
+        )
+
+        # Class 3: non-zero offset
+        off3 = item.get_offset(3)
+        self.assertGreater(off3, off2)
+        self.assertEqual(item.get_flags(3, count=3), (0, 2, 6))
+
+    def test_parsing_serialization_roundtrip(self) -> None:
+        """Verify from_cursor, from_buffer, and to_bytes roundtrip."""
+        item = HiddenapiClassDataItem.from_class_flags(
+            [
+                [HiddenapiRestrictionFlag.BLACKLIST],
+                [HiddenapiRestrictionFlag.GREYLIST_MAX_O, HiddenapiRestrictionFlag.WHITELIST],
+            ]
+        )
+
+        raw = item.to_bytes()
+        self.assertEqual(len(raw), item.size)
+
+        parsed_cursor = HiddenapiClassDataItem.from_cursor(Cursor(raw))
+        self.assertEqual(bytes(parsed_cursor.data), bytes(item.data))
+        self.assertEqual(parsed_cursor.size, item.size)
+        self.assertEqual(parsed_cursor.get_flags(0, count=1), (2,))
+        self.assertEqual(parsed_cursor.get_flags(1, count=2), (3, 0))
+
+        buf = b"\x00" * 12 + raw
+        parsed_buf = HiddenapiClassDataItem.from_buffer(buf, Offset[HiddenapiClassDataItem](12))
+        self.assertEqual(bytes(parsed_buf.data), bytes(item.data))
+
+    def test_index_error_handling(self) -> None:
+        """Verify IndexError raised for invalid class_idx."""
+        item = HiddenapiClassDataItem.from_class_flags([[1], [2]])
+
+        with self.assertRaises(IndexError):
+            item.get_offset(-1)
+
+        with self.assertRaises(IndexError):
+            item.get_offset(2)  # Only classes 0 and 1 exist
+
+        with self.assertRaises(IndexError):
+            item.get_flags(10, count=1)
+
+    def test_invalid_cursor_size(self) -> None:
+        """Verify ValueError raised when size header < 4."""
+        invalid_bytes = struct.pack("<I", 2)
+        cursor = Cursor(invalid_bytes)
+        with self.assertRaises(ValueError):
+            HiddenapiClassDataItem.from_cursor(cursor)
 
 
 if __name__ == "__main__":

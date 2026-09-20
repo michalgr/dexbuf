@@ -4,7 +4,7 @@ See https://source.android.com/docs/core/runtime/dex-format
 """
 
 import struct
-from collections.abc import Buffer, Iterator
+from collections.abc import Buffer, Iterator, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import TYPE_CHECKING, ClassVar, Self, overload
@@ -41,6 +41,8 @@ __all__ = [
     "EncodedTypeAddrPair",
     "FieldAnnotation",
     "FieldIdItem",
+    "HiddenapiClassDataItem",
+    "HiddenapiRestrictionFlag",
     "MethodAnnotation",
     "MethodHandleItem",
     "MethodIdItem",
@@ -752,6 +754,103 @@ class ClassDataItem:
             + b"".join(m.to_bytes() for m in self.direct_methods)
             + b"".join(m.to_bytes() for m in self.virtual_methods)
         )
+
+
+class HiddenapiRestrictionFlag(IntEnum):
+    """Hidden API restriction flags introduced in Android 10 (DEX 039).
+
+    See https://source.android.com/docs/core/runtime/dex-format#hiddenapi-class-data-item
+    """
+
+    WHITELIST = 0
+    GREYLIST = 1
+    BLACKLIST = 2
+    GREYLIST_MAX_O = 3
+    GREYLIST_MAX_P = 4
+    GREYLIST_MAX_Q = 5
+    GREYLIST_MAX_R = 6
+
+
+@dataclass(slots=True, frozen=True)
+class HiddenapiClassDataItem:
+    """Hidden API class data item record containing restriction flags for boot classpath classes.
+
+    See https://source.android.com/docs/core/runtime/dex-format#hiddenapi-class-data-item
+    """
+
+    PADDING: ClassVar[int] = 4
+
+    data: memoryview
+
+    @property
+    def size(self) -> int:
+        """Total section size in bytes including header."""
+        return 4 + len(self.data)
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse a HiddenapiClassDataItem from a Cursor."""
+        size = cursor.read_u32()
+        if size < 4:
+            raise ValueError(f"Invalid HiddenapiClassDataItem size: {size}")
+        data = cursor.read_slice(size - 4)
+        return cls(data=data)
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse a HiddenapiClassDataItem from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this HiddenapiClassDataItem to raw DEX bytes."""
+        return struct.pack("<I", self.size) + bytes(self.data)
+
+    def get_offset(self, class_idx: int) -> int:
+        """Get the byte offset for class_idx from the item start."""
+        byte_off = class_idx * 4
+        if class_idx < 0 or byte_off + 4 > len(self.data):
+            raise IndexError(f"class_idx {class_idx} out of range")
+        (off,) = struct.unpack_from("<I", self.data, byte_off)
+        return off
+
+    def iter_flags(self, class_idx: int, count: int) -> Iterator[int]:
+        """Iterate over uleb128 restriction flags for class_idx."""
+        offset = self.get_offset(class_idx)
+        if offset == 0:
+            for _ in range(count):
+                yield 0
+        else:
+            cursor = Cursor(self.data, offset - 4)
+            for _ in range(count):
+                yield cursor.read_uleb128()
+
+    def get_flags(self, class_idx: int, count: int) -> tuple[int, ...]:
+        """Get tuple of restriction flags for class_idx."""
+        return tuple(self.iter_flags(class_idx, count))
+
+    @classmethod
+    def from_class_flags(cls, class_flags: Sequence[Sequence[int] | None]) -> Self:
+        """Construct a HiddenapiClassDataItem from sequences of per-class flag integers."""
+        offsets: list[int] = []
+        payload_bytes = bytearray()
+        num_classes = len(class_flags)
+        header_size = 4
+        offsets_table_size = num_classes * 4
+        current_offset = header_size + offsets_table_size
+
+        for cf in class_flags:
+            if cf is None or not cf or all(f == 0 for f in cf):
+                offsets.append(0)
+            else:
+                offsets.append(current_offset)
+                for flag in cf:
+                    encoded = encode_uleb128(flag)
+                    payload_bytes.extend(encoded)
+                    current_offset += len(encoded)
+
+        offsets_bytes = struct.pack(f"<{num_classes}I", *offsets) if num_classes > 0 else b""
+        data = memoryview(bytes(offsets_bytes + payload_bytes))
+        return cls(data=data)
 
 
 class AnnotationVisibility(IntEnum):

@@ -53,7 +53,8 @@ class TestInstructionPayloads(unittest.TestCase):
 
     def test_fill_array_data_payload_even(self) -> None:
         data = b"\x01\x02\x03\x04"
-        payload = FillArrayDataPayload(element_width=1, size=4, data=data)
+        payload = FillArrayDataPayload(element_width=1, data=data)
+        self.assertEqual(payload.size, 4)
         self.assertEqual(payload.code_units, 4 + 2)
 
         raw = payload.to_bytes()
@@ -68,7 +69,8 @@ class TestInstructionPayloads(unittest.TestCase):
     def test_fill_array_data_payload_odd_padding(self) -> None:
         # Odd byte count: 3 elements of width 1 = 3 bytes -> needs 1 alignment byte
         data = b"\x01\x02\x03"
-        payload = FillArrayDataPayload(element_width=1, size=3, data=data)
+        payload = FillArrayDataPayload(element_width=1, data=data)
+        self.assertEqual(payload.size, 3)
         self.assertEqual(payload.code_units, 4 + 2)  # (3 + 1)//2 = 2
 
         raw = payload.to_bytes()
@@ -94,7 +96,7 @@ class TestInstructionPayloads(unittest.TestCase):
         self.assertIsInstance(iop_sparse, SparseSwitchPayload)
         self.assertEqual(iop_sparse, sparse)
 
-        fill = FillArrayDataPayload(element_width=2, size=1, data=b"\x01\x02")
+        fill = FillArrayDataPayload(element_width=2, data=b"\x01\x02")
         raw_fill = fill.to_bytes()
         iop_fill = parse_iop(Cursor(raw_fill))
         self.assertIsInstance(iop_fill, FillArrayDataPayload)
@@ -104,6 +106,11 @@ class TestInstructionPayloads(unittest.TestCase):
         payload = PackedSwitchPayload(first_key=0, targets=())
         with self.assertRaises(FrozenInstanceError):
             payload.first_key = 10  # type: ignore[misc]
+
+        fill_payload = FillArrayDataPayload(element_width=1, data=b"\x01")
+        self.assertEqual(fill_payload.__slots__, ("element_width", "data"))
+        with self.assertRaises((TypeError, AttributeError)):
+            fill_payload.size = 10  # type: ignore[misc]
 
 
 if __name__ == "__main__":

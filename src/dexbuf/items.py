@@ -63,15 +63,19 @@ class StringDataItem:
 
     PADDING: ClassVar[int] = 1
 
-    utf16_size: int
     data: str
+
+    @property
+    def utf16_size(self) -> int:
+        """UTF-16 code unit count of data string."""
+        return utf16_code_units(self.data)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse a StringDataItem from a Cursor."""
         utf16_size = cursor.read_uleb128()
         data = cursor.read_mutf8(expected_utf16_size=utf16_size)
-        return cls(utf16_size=utf16_size, data=data)
+        return cls(data=data)
 
     @classmethod
     def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
@@ -81,7 +85,7 @@ class StringDataItem:
     @classmethod
     def from_str(cls, s: str) -> Self:
         """Construct a StringDataItem directly from a Python string."""
-        return cls(utf16_size=utf16_code_units(s), data=s)
+        return cls(data=s)
 
     def to_bytes(self) -> bytes:
         """Encode this StringDataItem to raw DEX bytes."""
@@ -175,8 +179,12 @@ class TypeList:
             """Encode this TypeList.Item to raw DEX bytes."""
             return self.STRUCT.pack(self.type_idx)
 
-    size: int
     list: tuple[Item, ...]
+
+    @property
+    def size(self) -> int:
+        """Number of items in list."""
+        return len(self.list)
 
     def __len__(self) -> int:
         return len(self.list)
@@ -198,7 +206,7 @@ class TypeList:
         """Parse a TypeList from a Cursor."""
         (size,) = cursor.unpack(cls.HEADER)
         items = tuple(cls.Item.from_cursor(cursor) for _ in range(size))
-        return cls(size=size, list=items)
+        return cls(list=items)
 
     @classmethod
     def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
@@ -429,9 +437,13 @@ class EncodedCatchHandler:
     See https://source.android.com/docs/core/runtime/dex-format#encoded-catch-handler
     """
 
-    size: int
     handlers: tuple[EncodedTypeAddrPair, ...]
     catch_all_addr: int | None
+
+    @property
+    def size(self) -> int:
+        """Signed size of handlers sequence (negative if catch-all address present)."""
+        return -len(self.handlers) if self.catch_all_addr is not None else len(self.handlers)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -443,7 +455,7 @@ class EncodedCatchHandler:
             catch_all_addr = cursor.read_uleb128()
         else:
             catch_all_addr = None
-        return cls(size=size, handlers=handlers, catch_all_addr=catch_all_addr)
+        return cls(handlers=handlers, catch_all_addr=catch_all_addr)
 
     def to_bytes(self) -> bytes:
         """Encode this EncodedCatchHandler to raw DEX bytes."""
@@ -462,15 +474,19 @@ class EncodedCatchHandlerList:
     See https://source.android.com/docs/core/runtime/dex-format#encoded-catch-handler-list
     """
 
-    size: int
     list: tuple[EncodedCatchHandler, ...]
+
+    @property
+    def size(self) -> int:
+        """Number of catch handlers in list."""
+        return len(self.list)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse an EncodedCatchHandlerList from a Cursor."""
         size = cursor.read_uleb128()
         handlers = tuple(EncodedCatchHandler.from_cursor(cursor) for _ in range(size))
-        return cls(size=size, list=handlers)
+        return cls(list=handlers)
 
     @classmethod
     def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
@@ -492,9 +508,13 @@ class DebugInfoItem:
     PADDING: ClassVar[int] = 1
 
     line_start: int
-    parameters_size: int
     parameter_names: tuple[Idx[StringIdItem] | None, ...]
     bytecode: memoryview
+
+    @property
+    def parameters_size(self) -> int:
+        """Number of parameter name entries."""
+        return len(self.parameter_names)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -516,7 +536,6 @@ class DebugInfoItem:
 
         return cls(
             line_start=line_start,
-            parameters_size=parameters_size,
             parameter_names=parameter_names,
             bytecode=bytecode,
         )
@@ -569,12 +588,20 @@ class CodeItem:
     registers_size: int
     ins_size: int
     outs_size: int
-    tries_size: int
     debug_info_off: Offset[DebugInfoItem]
-    insns_size: int
     insns: memoryview
     tries: tuple[TryItem, ...]
     handlers: EncodedCatchHandlerList | None
+
+    @property
+    def insns_size(self) -> int:
+        """Size of bytecode instructions in 16-bit code units."""
+        return len(self.insns) // 2
+
+    @property
+    def tries_size(self) -> int:
+        """Number of try items."""
+        return len(self.tries)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -603,9 +630,7 @@ class CodeItem:
             registers_size=registers_size,
             ins_size=ins_size,
             outs_size=outs_size,
-            tries_size=tries_size,
             debug_info_off=Offset[DebugInfoItem](debug_info_off),
-            insns_size=insns_size,
             insns=insns,
             tries=tries,
             handlers=handlers,
@@ -661,14 +686,30 @@ class ClassDataItem:
 
     PADDING: ClassVar[int] = 1
 
-    static_fields_size: int
-    instance_fields_size: int
-    direct_methods_size: int
-    virtual_methods_size: int
     static_fields: tuple[EncodedField, ...]
     instance_fields: tuple[EncodedField, ...]
     direct_methods: tuple[EncodedMethod, ...]
     virtual_methods: tuple[EncodedMethod, ...]
+
+    @property
+    def static_fields_size(self) -> int:
+        """Number of static fields."""
+        return len(self.static_fields)
+
+    @property
+    def instance_fields_size(self) -> int:
+        """Number of instance fields."""
+        return len(self.instance_fields)
+
+    @property
+    def direct_methods_size(self) -> int:
+        """Number of direct methods."""
+        return len(self.direct_methods)
+
+    @property
+    def virtual_methods_size(self) -> int:
+        """Number of virtual methods."""
+        return len(self.virtual_methods)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -688,10 +729,6 @@ class ClassDataItem:
             EncodedMethod.from_cursor(cursor) for _ in range(virtual_methods_size)
         )
         return cls(
-            static_fields_size=static_fields_size,
-            instance_fields_size=instance_fields_size,
-            direct_methods_size=direct_methods_size,
-            virtual_methods_size=virtual_methods_size,
             static_fields=static_fields,
             instance_fields=instance_fields,
             direct_methods=direct_methods,
@@ -794,8 +831,12 @@ class AnnotationSetItem:
     PADDING: ClassVar[int] = 4
     HEADER: ClassVar[struct.Struct] = struct.Struct("<I")
 
-    size: int
     entries: tuple[AnnotationOffItem, ...]
+
+    @property
+    def size(self) -> int:
+        """Number of entries in annotation set."""
+        return len(self.entries)
 
     def __len__(self) -> int:
         return len(self.entries)
@@ -817,7 +858,7 @@ class AnnotationSetItem:
         """Parse an AnnotationSetItem from a Cursor."""
         (size,) = cursor.unpack(cls.HEADER)
         entries = tuple(AnnotationOffItem.from_cursor(cursor) for _ in range(size))
-        return cls(size=size, entries=entries)
+        return cls(entries=entries)
 
     @classmethod
     def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
@@ -866,8 +907,12 @@ class AnnotationSetRefList:
     PADDING: ClassVar[int] = 4
     HEADER: ClassVar[struct.Struct] = struct.Struct("<I")
 
-    size: int
     list: tuple[AnnotationSetRefItem, ...]
+
+    @property
+    def size(self) -> int:
+        """Number of entries in annotation set ref list."""
+        return len(self.list)
 
     def __len__(self) -> int:
         return len(self.list)
@@ -891,7 +936,7 @@ class AnnotationSetRefList:
         """Parse an AnnotationSetRefList from a Cursor."""
         (size,) = cursor.unpack(cls.HEADER)
         items = tuple(AnnotationSetRefItem.from_cursor(cursor) for _ in range(size))
-        return cls(size=size, list=items)
+        return cls(list=items)
 
     @classmethod
     def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
@@ -1007,12 +1052,24 @@ class AnnotationsDirectoryItem:
     HEADER: ClassVar[struct.Struct] = struct.Struct("<4I")
 
     class_annotations_off: Offset[AnnotationSetItem]
-    fields_size: int
-    annotated_methods_size: int
-    annotated_parameters_size: int
     field_annotations: tuple[FieldAnnotation, ...]
     method_annotations: tuple[MethodAnnotation, ...]
     parameter_annotations: tuple[ParameterAnnotation, ...]
+
+    @property
+    def fields_size(self) -> int:
+        """Number of field annotations."""
+        return len(self.field_annotations)
+
+    @property
+    def annotated_methods_size(self) -> int:
+        """Number of method annotations."""
+        return len(self.method_annotations)
+
+    @property
+    def annotated_parameters_size(self) -> int:
+        """Number of parameter annotations."""
+        return len(self.parameter_annotations)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -1034,9 +1091,6 @@ class AnnotationsDirectoryItem:
 
         return cls(
             class_annotations_off=Offset[AnnotationSetItem](class_annotations_off),
-            fields_size=fields_size,
-            annotated_methods_size=annotated_methods_size,
-            annotated_parameters_size=annotated_parameters_size,
             field_annotations=field_annotations,
             method_annotations=method_annotations,
             parameter_annotations=parameter_annotations,

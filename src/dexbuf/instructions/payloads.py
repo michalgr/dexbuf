@@ -118,8 +118,12 @@ class FillArrayDataPayload:
     HEADER_STRUCT: ClassVar[struct.Struct] = struct.Struct("<HHI")
 
     element_width: int
-    size: int
     data: bytes
+
+    @property
+    def size(self) -> int:
+        """Number of elements in array data."""
+        return len(self.data) // self.element_width if self.element_width else 0
 
     @property
     def code_units(self) -> int:
@@ -138,7 +142,7 @@ class FillArrayDataPayload:
         data = cursor.read_bytes(data_byte_count)
         if data_byte_count % 2 != 0:
             cursor.skip(1)
-        return cls(element_width=element_width, size=size, data=data)
+        return cls(element_width=element_width, data=data)
 
     @classmethod
     def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:

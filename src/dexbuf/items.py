@@ -7,7 +7,7 @@ import struct
 from collections.abc import Buffer, Iterator, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import TYPE_CHECKING, ClassVar, Self, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Self, overload
 
 from dexbuf.cursor import Cursor
 from dexbuf.debug import skip_debug_instruction
@@ -43,6 +43,10 @@ __all__ = [
     "FieldIdItem",
     "HiddenapiClassDataItem",
     "HiddenapiRestrictionFlag",
+    "ItemType",
+    "MapItem",
+    "MapItemType",
+    "MapList",
     "MethodAnnotation",
     "MethodHandleItem",
     "MethodIdItem",
@@ -1367,3 +1371,128 @@ class MethodHandleItem:
         return self.STRUCT.pack(
             self.method_handle_type, self.unused1, self.field_or_method_id, self.unused2
         )
+
+
+class ItemType(IntEnum):
+    """Enumeration of all 21 DEX section type codes.
+
+    See https://source.android.com/docs/core/runtime/dex-format#type-codes
+    """
+
+    HEADER_ITEM = 0x0000
+    STRING_ID_ITEM = 0x0001
+    TYPE_ID_ITEM = 0x0002
+    PROTO_ID_ITEM = 0x0003
+    FIELD_ID_ITEM = 0x0004
+    METHOD_ID_ITEM = 0x0005
+    CLASS_DEF_ITEM = 0x0006
+    CALL_SITE_ID_ITEM = 0x0007
+    METHOD_HANDLE_ITEM = 0x0008
+    MAP_LIST = 0x1000
+    TYPE_LIST = 0x1001
+    ANNOTATION_SET_REF_LIST = 0x1002
+    ANNOTATION_SET_ITEM = 0x1003
+    CLASS_DATA_ITEM = 0x2000
+    CODE_ITEM = 0x2001
+    STRING_DATA_ITEM = 0x2002
+    DEBUG_INFO_ITEM = 0x2003
+    ANNOTATION_ITEM = 0x2004
+    ENCODED_ARRAY_ITEM = 0x2005
+    ANNOTATIONS_DIRECTORY_ITEM = 0x2006
+    HIDDENAPI_CLASS_DATA_ITEM = 0xF000
+
+
+MapItemType = ItemType
+
+
+@dataclass(slots=True, frozen=True)
+class MapItem:
+    """Individual entry in the map list cataloging a DEX section.
+
+    See https://source.android.com/docs/core/runtime/dex-format#map-item
+    """
+
+    PADDING: ClassVar[int] = 4
+    STRUCT: ClassVar[struct.Struct] = struct.Struct("<HHII")
+
+    item_type: int
+    size: int
+    offset: Offset[Any]
+    unused: int = 0
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse a MapItem from a Cursor."""
+        item_type, unused, size, offset = cursor.unpack(cls.STRUCT)
+        return cls(
+            item_type=item_type,
+            unused=unused,
+            size=size,
+            offset=Offset[Any](offset),
+        )
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse a MapItem from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this MapItem to raw DEX bytes."""
+        return self.STRUCT.pack(self.item_type, self.unused, self.size, self.offset)
+
+
+@dataclass(slots=True, frozen=True)
+class MapList:
+    """Table of map_item entries describing file layout.
+
+    See https://source.android.com/docs/core/runtime/dex-format#map-list
+    """
+
+    PADDING: ClassVar[int] = 4
+    HEADER: ClassVar[struct.Struct] = struct.Struct("<I")
+    Item = MapItem
+
+    list: tuple[MapItem, ...]
+
+    @property
+    def size(self) -> int:
+        """Number of map items in list."""
+        return len(self.list)
+
+    def __len__(self) -> int:
+        return len(self.list)
+
+    def __iter__(self) -> Iterator[MapItem]:
+        return iter(self.list)
+
+    @overload
+    def __getitem__(self, index: int) -> MapItem: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[MapItem, ...]: ...
+
+    def __getitem__(self, index: int | slice) -> MapItem | tuple[MapItem, ...]:
+        return self.list[index]
+
+    def get(self, item_type: int | ItemType) -> MapItem | None:
+        """Fast lookup for a specific section entry by type code."""
+        for item in self.list:
+            if item.item_type == item_type:
+                return item
+        return None
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse a MapList from a Cursor."""
+        (size,) = cursor.unpack(cls.HEADER)
+        items = tuple(MapItem.from_cursor(cursor) for _ in range(size))
+        return cls(list=items)
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse a MapList from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this MapList to raw DEX bytes."""
+        return self.HEADER.pack(self.size) + b"".join(item.to_bytes() for item in self.list)

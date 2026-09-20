@@ -89,8 +89,12 @@ class EncodedAnnotation:
     """
 
     type_idx: Idx[Any]
-    size: int
     elements: tuple[AnnotationElement, ...]
+
+    @property
+    def size(self) -> int:
+        """Number of annotation elements."""
+        return len(self.elements)
 
     def __len__(self) -> int:
         return len(self.elements)
@@ -113,7 +117,7 @@ class EncodedAnnotation:
         type_idx = cursor.read_uleb128()
         size = cursor.read_uleb128()
         elements = tuple(AnnotationElement.from_cursor(cursor) for _ in range(size))
-        return cls(type_idx=Idx[Any](type_idx), size=size, elements=elements)
+        return cls(type_idx=Idx[Any](type_idx), elements=elements)
 
     def to_bytes(self) -> bytes:
         """Encode this EncodedAnnotation to raw DEX bytes."""
@@ -131,8 +135,12 @@ class EncodedArray:
     See https://source.android.com/docs/core/runtime/dex-format#encoded-array
     """
 
-    size: int
     values: tuple[EncodedValue, ...]
+
+    @property
+    def size(self) -> int:
+        """Number of values in array."""
+        return len(self.values)
 
     def __len__(self) -> int:
         return len(self.values)
@@ -154,7 +162,7 @@ class EncodedArray:
         """Parse an EncodedArray from a Cursor."""
         size = cursor.read_uleb128()
         values = tuple(EncodedValue.from_cursor(cursor) for _ in range(size))
-        return cls(size=size, values=values)
+        return cls(values=values)
 
     def to_bytes(self) -> bytes:
         """Encode this EncodedArray to raw DEX bytes."""

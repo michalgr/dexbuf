@@ -78,7 +78,7 @@ class TestStringDataItem(unittest.TestCase):
 
         # Verify PADDING is not in dataclasses.fields
         field_names = [f.name for f in dataclasses.fields(StringDataItem)]
-        self.assertEqual(field_names, ["utf16_size", "data"])
+        self.assertEqual(field_names, ["data"])
         self.assertNotIn("PADDING", field_names)
 
     def test_immutability(self) -> None:
@@ -86,9 +86,11 @@ class TestStringDataItem(unittest.TestCase):
         item = StringDataItem.from_str("Frozen")
         with self.assertRaises(FrozenInstanceError):
             item.data = "Modified"  # type: ignore[misc]
+        with self.assertRaises((TypeError, AttributeError)):
+            item.utf16_size = 10  # type: ignore[misc]
 
         # Verify __slots__ is set on the class
-        self.assertEqual(item.__slots__, ("utf16_size", "data"))
+        self.assertEqual(item.__slots__, ("data",))
 
     def test_to_bytes_and_from_cursor(self) -> None:
         """Test encoding StringDataItem to bytes and parsing via Cursor."""
@@ -347,7 +349,7 @@ class TestTypeList(unittest.TestCase):
         self.assertEqual(TypeList.Item.STRUCT.format, "<H")
 
         type_list_fields = [f.name for f in dataclasses.fields(TypeList)]
-        self.assertEqual(type_list_fields, ["size", "list"])
+        self.assertEqual(type_list_fields, ["list"])
         self.assertNotIn("PADDING", type_list_fields)
         self.assertNotIn("HEADER", type_list_fields)
 
@@ -361,13 +363,13 @@ class TestTypeList(unittest.TestCase):
             item.type_idx = Idx[TypeIdItem](2)  # type: ignore[misc]
         self.assertEqual(item.__slots__, ("type_idx",))
 
-        type_list = TypeList(size=1, list=(item,))
-        with self.assertRaises(FrozenInstanceError):
+        type_list = TypeList(list=(item,))
+        with self.assertRaises((TypeError, AttributeError)):
             type_list.size = 2  # type: ignore[misc]
-        self.assertEqual(type_list.__slots__, ("size", "list"))
+        self.assertEqual(type_list.__slots__, ("list",))
 
     def test_empty_list(self) -> None:
-        empty = TypeList(size=0, list=())
+        empty = TypeList(list=())
         raw = empty.to_bytes()
         self.assertEqual(raw, struct.pack("<I", 0))
         self.assertEqual(len(empty), 0)
@@ -382,7 +384,7 @@ class TestTypeList(unittest.TestCase):
             TypeList.Item(type_idx=Idx[TypeIdItem](20)),
             TypeList.Item(type_idx=Idx[TypeIdItem](30)),
         )
-        type_list = TypeList(size=3, list=items)
+        type_list = TypeList(list=items)
 
         # Test container methods
         self.assertEqual(len(type_list), 3)
@@ -597,38 +599,36 @@ class TestTryAndCatchHandlers(unittest.TestCase):
         pair2 = EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](2), addr=0x20)
 
         # Handler with catch-all (size <= 0)
-        handler_catch_all = EncodedCatchHandler(
-            size=-2, handlers=(pair1, pair2), catch_all_addr=0x30
-        )
-        with self.assertRaises(FrozenInstanceError):
+        handler_catch_all = EncodedCatchHandler(handlers=(pair1, pair2), catch_all_addr=0x30)
+        self.assertEqual(handler_catch_all.size, -2)
+        with self.assertRaises((TypeError, AttributeError)):
             handler_catch_all.size = 1  # type: ignore[misc]
 
-        self.assertEqual(handler_catch_all.__slots__, ("size", "handlers", "catch_all_addr"))
+        self.assertEqual(handler_catch_all.__slots__, ("handlers", "catch_all_addr"))
 
         raw1 = handler_catch_all.to_bytes()
         parsed1 = EncodedCatchHandler.from_cursor(Cursor(raw1))
         self.assertEqual(parsed1, handler_catch_all)
 
         # Handler without catch-all (size > 0)
-        handler_no_catch_all = EncodedCatchHandler(
-            size=2, handlers=(pair1, pair2), catch_all_addr=None
-        )
+        handler_no_catch_all = EncodedCatchHandler(handlers=(pair1, pair2), catch_all_addr=None)
+        self.assertEqual(handler_no_catch_all.size, 2)
         raw2 = handler_no_catch_all.to_bytes()
         parsed2 = EncodedCatchHandler.from_cursor(Cursor(raw2))
         self.assertEqual(parsed2, handler_no_catch_all)
 
     def test_encoded_catch_handler_list(self) -> None:
         handler = EncodedCatchHandler(
-            size=1,
             handlers=(EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](5), addr=0x50),),
             catch_all_addr=None,
         )
-        handler_list = EncodedCatchHandlerList(size=1, list=(handler,))
+        handler_list = EncodedCatchHandlerList(list=(handler,))
 
-        with self.assertRaises(FrozenInstanceError):
+        self.assertEqual(handler_list.size, 1)
+        with self.assertRaises((TypeError, AttributeError)):
             handler_list.size = 2  # type: ignore[misc]
 
-        self.assertEqual(handler_list.__slots__, ("size", "list"))
+        self.assertEqual(handler_list.__slots__, ("list",))
 
         raw = handler_list.to_bytes()
         parsed = EncodedCatchHandlerList.from_buffer(raw)
@@ -645,9 +645,7 @@ class TestCodeItem(unittest.TestCase):
             "registers_size",
             "ins_size",
             "outs_size",
-            "tries_size",
             "debug_info_off",
-            "insns_size",
             "insns",
             "tries",
             "handlers",
@@ -659,23 +657,23 @@ class TestCodeItem(unittest.TestCase):
             registers_size=2,
             ins_size=1,
             outs_size=0,
-            tries_size=0,
             debug_info_off=NO_OFFSET,
-            insns_size=1,
             insns=memoryview(b"\x0e\x00"),  # return-void
             tries=(),
             handlers=None,
         )
         with self.assertRaises(FrozenInstanceError):
             item.registers_size = 4  # type: ignore[misc]
+        with self.assertRaises((TypeError, AttributeError)):
+            item.insns_size = 5  # type: ignore[misc]
+        with self.assertRaises((TypeError, AttributeError)):
+            item.tries_size = 2  # type: ignore[misc]
 
         expected_slots = (
             "registers_size",
             "ins_size",
             "outs_size",
-            "tries_size",
             "debug_info_off",
-            "insns_size",
             "insns",
             "tries",
             "handlers",
@@ -689,13 +687,13 @@ class TestCodeItem(unittest.TestCase):
             registers_size=1,
             ins_size=0,
             outs_size=0,
-            tries_size=0,
             debug_info_off=NO_OFFSET,
-            insns_size=2,
             insns=memoryview(bytecode),
             tries=(),
             handlers=None,
         )
+        self.assertEqual(item_no_tries.insns_size, 2)
+        self.assertEqual(item_no_tries.tries_size, 0)
 
         raw = item_no_tries.to_bytes()
         cursor = Cursor(raw)
@@ -722,19 +720,16 @@ class TestCodeItem(unittest.TestCase):
         bytecode = b"\x00\x00\x0e\x00"
         try_item = TryItem(start_addr=0, insn_count=1, handler_off=0)
         handler = EncodedCatchHandler(
-            size=-1,
             handlers=(EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](0), addr=2),),
             catch_all_addr=4,
         )
-        handlers = EncodedCatchHandlerList(size=1, list=(handler,))
+        handlers = EncodedCatchHandlerList(list=(handler,))
 
         item = CodeItem(
             registers_size=1,
             ins_size=0,
             outs_size=0,
-            tries_size=1,
             debug_info_off=NO_OFFSET,
-            insns_size=2,
             insns=memoryview(bytecode),
             tries=(try_item,),
             handlers=handlers,
@@ -749,19 +744,16 @@ class TestCodeItem(unittest.TestCase):
         bytecode = b"\x0e\x00"  # return-void
         try_item = TryItem(start_addr=0, insn_count=1, handler_off=0)
         handler = EncodedCatchHandler(
-            size=1,
             handlers=(EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](1), addr=10),),
             catch_all_addr=None,
         )
-        handlers = EncodedCatchHandlerList(size=1, list=(handler,))
+        handlers = EncodedCatchHandlerList(list=(handler,))
 
         item = CodeItem(
             registers_size=1,
             ins_size=0,
             outs_size=0,
-            tries_size=1,
             debug_info_off=NO_OFFSET,
-            insns_size=1,
             insns=memoryview(bytecode),
             tries=(try_item,),
             handlers=handlers,
@@ -785,10 +777,6 @@ class TestClassDataItem(unittest.TestCase):
 
         field_names = [f.name for f in dataclasses.fields(ClassDataItem)]
         expected_fields = [
-            "static_fields_size",
-            "instance_fields_size",
-            "direct_methods_size",
-            "virtual_methods_size",
             "static_fields",
             "instance_fields",
             "direct_methods",
@@ -801,23 +789,15 @@ class TestClassDataItem(unittest.TestCase):
 
     def test_immutability_and_slots(self) -> None:
         item = ClassDataItem(
-            static_fields_size=0,
-            instance_fields_size=0,
-            direct_methods_size=0,
-            virtual_methods_size=0,
             static_fields=(),
             instance_fields=(),
             direct_methods=(),
             virtual_methods=(),
         )
-        with self.assertRaises(FrozenInstanceError):
+        with self.assertRaises((TypeError, AttributeError)):
             item.static_fields_size = 1  # type: ignore[misc]
 
         expected_slots = (
-            "static_fields_size",
-            "instance_fields_size",
-            "direct_methods_size",
-            "virtual_methods_size",
             "static_fields",
             "instance_fields",
             "direct_methods",
@@ -827,15 +807,16 @@ class TestClassDataItem(unittest.TestCase):
 
     def test_empty_class_data(self) -> None:
         empty = ClassDataItem(
-            static_fields_size=0,
-            instance_fields_size=0,
-            direct_methods_size=0,
-            virtual_methods_size=0,
             static_fields=(),
             instance_fields=(),
             direct_methods=(),
             virtual_methods=(),
         )
+        self.assertEqual(empty.static_fields_size, 0)
+        self.assertEqual(empty.instance_fields_size, 0)
+        self.assertEqual(empty.direct_methods_size, 0)
+        self.assertEqual(empty.virtual_methods_size, 0)
+
         raw = empty.to_bytes()
         self.assertEqual(raw, b"\x00\x00\x00\x00")
 
@@ -852,15 +833,15 @@ class TestClassDataItem(unittest.TestCase):
         vm2 = EncodedMethod(method_idx_diff=1, access_flags=0x0001, code_off=NO_OFFSET)
 
         item = ClassDataItem(
-            static_fields_size=2,
-            instance_fields_size=1,
-            direct_methods_size=1,
-            virtual_methods_size=2,
             static_fields=(sf1, sf2),
             instance_fields=(if1,),
             direct_methods=(dm1,),
             virtual_methods=(vm1, vm2),
         )
+        self.assertEqual(item.static_fields_size, 2)
+        self.assertEqual(item.instance_fields_size, 1)
+        self.assertEqual(item.direct_methods_size, 1)
+        self.assertEqual(item.virtual_methods_size, 2)
 
         raw = item.to_bytes()
         cursor = Cursor(raw)
@@ -883,23 +864,22 @@ class TestDebugInfoItem(unittest.TestCase):
         self.assertEqual(DebugInfoItem.PADDING, 1)
 
         field_names = [f.name for f in dataclasses.fields(DebugInfoItem)]
-        expected_fields = ["line_start", "parameters_size", "parameter_names", "bytecode"]
+        expected_fields = ["line_start", "parameter_names", "bytecode"]
         self.assertEqual(field_names, expected_fields)
         self.assertNotIn("PADDING", field_names)
 
     def test_immutability_and_slots(self) -> None:
         item = DebugInfoItem(
             line_start=1,
-            parameters_size=0,
             parameter_names=(),
             bytecode=memoryview(b"\x00"),
         )
         with self.assertRaises(FrozenInstanceError):
             item.line_start = 2  # type: ignore[misc]
+        with self.assertRaises((TypeError, AttributeError)):
+            item.parameters_size = 5  # type: ignore[misc]
 
-        self.assertEqual(
-            item.__slots__, ("line_start", "parameters_size", "parameter_names", "bytecode")
-        )
+        self.assertEqual(item.__slots__, ("line_start", "parameter_names", "bytecode"))
 
     def test_zero_copy_bytecode_and_roundtrip(self) -> None:
         # line_start=1, parameters_size=2 (param1=Idx(0), param2=None)
@@ -915,7 +895,6 @@ class TestDebugInfoItem(unittest.TestCase):
 
         item = DebugInfoItem(
             line_start=10,
-            parameters_size=2,
             parameter_names=(Idx[StringIdItem](0), None),
             bytecode=memoryview(bytecode_raw),
         )
@@ -962,7 +941,6 @@ class TestDebugInfoItem(unittest.TestCase):
 
         item = DebugInfoItem(
             line_start=100,
-            parameters_size=0,
             parameter_names=(),
             bytecode=memoryview(bytecode_raw),
         )
@@ -1009,7 +987,7 @@ class TestEncodedArrayItemAndCallSiteIdItem(unittest.TestCase):
         self.assertEqual(EncodedArrayItem.PADDING, 1)
 
         val = EncodedValue(value_arg=0, value_type=ValueType.INT, value=100)
-        arr = EncodedArray(size=1, values=(val,))
+        arr = EncodedArray(values=(val,))
         item = EncodedArrayItem(value=arr)
 
         with self.assertRaises(FrozenInstanceError):
@@ -1049,7 +1027,7 @@ class TestAnnotationItems(unittest.TestCase):
 
         val = EncodedValue(value_arg=0, value_type=ValueType.INT, value=42)
         elem = AnnotationElement(name_idx=Idx[Any](1), value=val)
-        ann = EncodedAnnotation(type_idx=Idx[Any](10), size=1, elements=(elem,))
+        ann = EncodedAnnotation(type_idx=Idx[Any](10), elements=(elem,))
         item = AnnotationItem(visibility=AnnotationVisibility.RUNTIME, annotation=ann)
 
         with self.assertRaises(FrozenInstanceError):
@@ -1085,12 +1063,12 @@ class TestAnnotationItems(unittest.TestCase):
 
         entry1 = AnnotationOffItem(annotation_off=Offset[AnnotationItem](0x100))
         entry2 = AnnotationOffItem(annotation_off=Offset[AnnotationItem](0x200))
-        set_item = AnnotationSetItem(size=2, entries=(entry1, entry2))
+        set_item = AnnotationSetItem(entries=(entry1, entry2))
 
-        with self.assertRaises(FrozenInstanceError):
+        with self.assertRaises((TypeError, AttributeError)):
             set_item.size = 1  # type: ignore[misc]
 
-        self.assertEqual(set_item.__slots__, ("size", "entries"))
+        self.assertEqual(set_item.__slots__, ("entries",))
         self.assertEqual(len(set_item), 2)
         self.assertEqual(set_item[0], entry1)
         self.assertEqual(set_item[1], entry2)
@@ -1126,12 +1104,12 @@ class TestAnnotationItems(unittest.TestCase):
 
         ref1 = AnnotationSetRefItem(annotations_off=Offset[AnnotationSetItem](0x1000))
         ref2 = AnnotationSetRefItem(annotations_off=Offset[AnnotationSetItem](0x2000))
-        ref_list = AnnotationSetRefList(size=2, list=(ref1, ref2))
+        ref_list = AnnotationSetRefList(list=(ref1, ref2))
 
-        with self.assertRaises(FrozenInstanceError):
+        with self.assertRaises((TypeError, AttributeError)):
             ref_list.size = 3  # type: ignore[misc]
 
-        self.assertEqual(ref_list.__slots__, ("size", "list"))
+        self.assertEqual(ref_list.__slots__, ("list",))
         self.assertEqual(len(ref_list), 2)
         self.assertEqual(ref_list[0], ref1)
         self.assertEqual(ref_list[1], ref2)
@@ -1198,24 +1176,22 @@ class TestAnnotationItems(unittest.TestCase):
 
         dir_item = AnnotationsDirectoryItem(
             class_annotations_off=Offset[AnnotationSetItem](0x500),
-            fields_size=1,
-            annotated_methods_size=1,
-            annotated_parameters_size=1,
             field_annotations=(fa,),
             method_annotations=(ma,),
             parameter_annotations=(pa,),
         )
 
-        with self.assertRaises(FrozenInstanceError):
+        self.assertEqual(dir_item.fields_size, 1)
+        self.assertEqual(dir_item.annotated_methods_size, 1)
+        self.assertEqual(dir_item.annotated_parameters_size, 1)
+
+        with self.assertRaises((TypeError, AttributeError)):
             dir_item.fields_size = 2  # type: ignore[misc]
 
         self.assertEqual(
             dir_item.__slots__,
             (
                 "class_annotations_off",
-                "fields_size",
-                "annotated_methods_size",
-                "annotated_parameters_size",
                 "field_annotations",
                 "method_annotations",
                 "parameter_annotations",

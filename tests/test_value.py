@@ -155,8 +155,13 @@ class TestEncodedArrayAndAnnotation(unittest.TestCase):
         """Verify EncodedArray sequence methods, parsing, and encoding."""
         v1 = EncodedValue(value_arg=0, value_type=ValueType.INT, value=10)
         v2 = EncodedValue(value_arg=0, value_type=ValueType.BOOLEAN, value=True)
-        arr = EncodedArray(size=2, values=(v1, v2))
+        arr = EncodedArray(values=(v1, v2))
 
+        self.assertEqual(arr.size, 2)
+        with self.assertRaises((TypeError, AttributeError)):
+            arr.size = 10  # type: ignore[misc]
+
+        self.assertEqual(arr.__slots__, ("values",))
         self.assertEqual(len(arr), 2)
         self.assertEqual(list(iter(arr)), [v1, v2])
         self.assertEqual(arr[0], v1)
@@ -173,8 +178,13 @@ class TestEncodedArrayAndAnnotation(unittest.TestCase):
         """Verify AnnotationElement and EncodedAnnotation serialization and sequence methods."""
         v = EncodedValue(value_arg=0, value_type=ValueType.INT, value=42)
         elem = AnnotationElement(name_idx=Idx(1), value=v)
-        annotation = EncodedAnnotation(type_idx=Idx(5), size=1, elements=(elem,))
+        annotation = EncodedAnnotation(type_idx=Idx(5), elements=(elem,))
 
+        self.assertEqual(annotation.size, 1)
+        with self.assertRaises((TypeError, AttributeError)):
+            annotation.size = 10  # type: ignore[misc]
+
+        self.assertEqual(annotation.__slots__, ("type_idx", "elements"))
         self.assertEqual(len(annotation), 1)
         self.assertEqual(annotation[0], elem)
         self.assertEqual(list(iter(annotation)), [elem])

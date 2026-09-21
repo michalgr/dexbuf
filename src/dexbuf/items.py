@@ -13,14 +13,27 @@ from dexbuf.cursor import Cursor
 from dexbuf.debug import skip_debug_instruction
 from dexbuf.leb128 import encode_sleb128, encode_uleb128, encode_uleb128p1
 from dexbuf.mutf8 import encode_mutf8, utf16_code_units
-from dexbuf.types import NO_OFFSET, Idx, Offset
+from dexbuf.types import NO_OFFSET, Count, Idx, Offset
 from dexbuf.value import EncodedAnnotation, EncodedArray
+
+ENDIAN_CONSTANT: int = 0x1234_5678
+REVERSE_ENDIAN_CONSTANT: int = 0x7856_3412
+DEX_FILE_MAGIC: bytes = b"dex\n035\x00"
+SUPPORTED_DEX_VERSIONS: tuple[str, ...] = ("035", "037", "038", "039", "040", "041")
+HEADER_SIZE_V40: int = 0x70
+HEADER_SIZE_V41: int = 0x78
 
 if TYPE_CHECKING:
     from dexbuf.debug import DebugInstruction, DebugPosition
     from dexbuf.instructions import IOP
 
 __all__ = [
+    "DEX_FILE_MAGIC",
+    "ENDIAN_CONSTANT",
+    "HEADER_SIZE_V40",
+    "HEADER_SIZE_V41",
+    "REVERSE_ENDIAN_CONSTANT",
+    "SUPPORTED_DEX_VERSIONS",
     "AnnotationItem",
     "AnnotationOffItem",
     "AnnotationSetItem",
@@ -41,6 +54,7 @@ __all__ = [
     "EncodedTypeAddrPair",
     "FieldAnnotation",
     "FieldIdItem",
+    "HeaderItem",
     "HiddenapiClassDataItem",
     "HiddenapiRestrictionFlag",
     "ItemType",
@@ -58,6 +72,154 @@ __all__ = [
     "TypeIdItem",
     "TypeList",
 ]
+
+
+@dataclass(slots=True, frozen=True)
+class HeaderItem:
+    """DEX file header item record representing file metadata and layout offsets.
+
+    See https://source.android.com/docs/core/runtime/dex-format#header-item
+    """
+
+    PADDING: ClassVar[int] = 4
+    STRUCT: ClassVar[struct.Struct] = struct.Struct("<8sI20s20I")
+    CONTAINER_STRUCT: ClassVar[struct.Struct] = struct.Struct("<II")
+
+    magic: bytes
+    checksum: int
+    signature: bytes
+    file_size: int
+    header_size: int
+    endian_tag: int
+    link_size: int
+    link_off: Offset[Any]
+    map_off: Offset[MapList]
+    string_ids_size: Count[StringIdItem]
+    string_ids_off: Offset[StringIdItem]
+    type_ids_size: Count[TypeIdItem]
+    type_ids_off: Offset[TypeIdItem]
+    proto_ids_size: Count[ProtoIdItem]
+    proto_ids_off: Offset[ProtoIdItem]
+    field_ids_size: Count[FieldIdItem]
+    field_ids_off: Offset[FieldIdItem]
+    method_ids_size: Count[MethodIdItem]
+    method_ids_off: Offset[MethodIdItem]
+    class_defs_size: Count[ClassDefItem]
+    class_defs_off: Offset[ClassDefItem]
+    data_size: int
+    data_off: Offset[Any]
+    container_size: int | None = None
+    header_offset: Offset[Any] | None = None
+
+    @property
+    def version(self) -> str:
+        """Extract DEX version string from magic header bytes."""
+        return self.magic[4:7].decode("ascii")
+
+    @property
+    def is_valid_endian(self) -> bool:
+        """Check if endian_tag matches ENDIAN_CONSTANT."""
+        return self.endian_tag == ENDIAN_CONSTANT
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse a HeaderItem from a Cursor."""
+        (
+            magic,
+            checksum,
+            signature,
+            file_size,
+            header_size,
+            endian_tag,
+            link_size,
+            link_off,
+            map_off,
+            string_ids_size,
+            string_ids_off,
+            type_ids_size,
+            type_ids_off,
+            proto_ids_size,
+            proto_ids_off,
+            field_ids_size,
+            field_ids_off,
+            method_ids_size,
+            method_ids_off,
+            class_defs_size,
+            class_defs_off,
+            data_size,
+            data_off,
+        ) = cursor.unpack(cls.STRUCT)
+
+        container_size = None
+        header_offset = None
+
+        if header_size >= HEADER_SIZE_V41 and cursor.remaining >= cls.CONTAINER_STRUCT.size:
+            container_size, raw_header_offset = cursor.unpack(cls.CONTAINER_STRUCT)
+            header_offset = Offset[Any](raw_header_offset)
+
+        return cls(
+            magic=magic,
+            checksum=checksum,
+            signature=signature,
+            file_size=file_size,
+            header_size=header_size,
+            endian_tag=endian_tag,
+            link_size=link_size,
+            link_off=Offset[Any](link_off),
+            map_off=Offset[MapList](map_off),
+            string_ids_size=Count[StringIdItem](string_ids_size),
+            string_ids_off=Offset[StringIdItem](string_ids_off),
+            type_ids_size=Count[TypeIdItem](type_ids_size),
+            type_ids_off=Offset[TypeIdItem](type_ids_off),
+            proto_ids_size=Count[ProtoIdItem](proto_ids_size),
+            proto_ids_off=Offset[ProtoIdItem](proto_ids_off),
+            field_ids_size=Count[FieldIdItem](field_ids_size),
+            field_ids_off=Offset[FieldIdItem](field_ids_off),
+            method_ids_size=Count[MethodIdItem](method_ids_size),
+            method_ids_off=Offset[MethodIdItem](method_ids_off),
+            class_defs_size=Count[ClassDefItem](class_defs_size),
+            class_defs_off=Offset[ClassDefItem](class_defs_off),
+            data_size=data_size,
+            data_off=Offset[Any](data_off),
+            container_size=container_size,
+            header_offset=header_offset,
+        )
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+        """Parse a HeaderItem from a buffer starting at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+    def to_bytes(self) -> bytes:
+        """Encode this HeaderItem to raw DEX bytes."""
+        res = self.STRUCT.pack(
+            self.magic,
+            self.checksum,
+            self.signature,
+            self.file_size,
+            self.header_size,
+            self.endian_tag,
+            self.link_size,
+            self.link_off,
+            self.map_off,
+            self.string_ids_size,
+            self.string_ids_off,
+            self.type_ids_size,
+            self.type_ids_off,
+            self.proto_ids_size,
+            self.proto_ids_off,
+            self.field_ids_size,
+            self.field_ids_off,
+            self.method_ids_size,
+            self.method_ids_off,
+            self.class_defs_size,
+            self.class_defs_off,
+            self.data_size,
+            self.data_off,
+        )
+        if self.container_size is not None and self.header_offset is not None:
+            res += self.CONTAINER_STRUCT.pack(self.container_size, self.header_offset)
+        return res
 
 
 @dataclass(slots=True, frozen=True)

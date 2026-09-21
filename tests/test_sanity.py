@@ -15,9 +15,15 @@ class TestSanity(unittest.TestCase):
     def test_top_level_exports(self) -> None:
         """Verify that top-level dexbuf module exports only public API items."""
         expected_all = [
+            "DEX_FILE_MAGIC",
+            "ENDIAN_CONSTANT",
+            "HEADER_SIZE_V40",
+            "HEADER_SIZE_V41",
             "IOP",
             "NO_INDEX",
             "NO_OFFSET",
+            "REVERSE_ENDIAN_CONSTANT",
+            "SUPPORTED_DEX_VERSIONS",
             "AnnotationElement",
             "AnnotationItem",
             "AnnotationOffItem",
@@ -49,6 +55,7 @@ class TestSanity(unittest.TestCase):
             "FieldAnnotation",
             "FieldIdItem",
             "Hat",
+            "HeaderItem",
             "HiddenapiClassDataItem",
             "HiddenapiRestrictionFlag",
             "Idx",

@@ -11,6 +11,12 @@ from dexbuf.debug import (
 )
 from dexbuf.instructions import IOP, Instruction, Opcode, Payload
 from dexbuf.items import (
+    DEX_FILE_MAGIC,
+    ENDIAN_CONSTANT,
+    HEADER_SIZE_V40,
+    HEADER_SIZE_V41,
+    REVERSE_ENDIAN_CONSTANT,
+    SUPPORTED_DEX_VERSIONS,
     AnnotationItem,
     AnnotationOffItem,
     AnnotationsDirectoryItem,
@@ -31,6 +37,7 @@ from dexbuf.items import (
     EncodedTypeAddrPair,
     FieldAnnotation,
     FieldIdItem,
+    HeaderItem,
     HiddenapiClassDataItem,
     HiddenapiRestrictionFlag,
     ItemType,
@@ -71,9 +78,15 @@ from dexbuf.value import (
 __version__ = "0.1.0.dev0"
 
 __all__ = [
+    "DEX_FILE_MAGIC",
+    "ENDIAN_CONSTANT",
+    "HEADER_SIZE_V40",
+    "HEADER_SIZE_V41",
     "IOP",
     "NO_INDEX",
     "NO_OFFSET",
+    "REVERSE_ENDIAN_CONSTANT",
+    "SUPPORTED_DEX_VERSIONS",
     "AnnotationElement",
     "AnnotationItem",
     "AnnotationOffItem",
@@ -105,6 +118,7 @@ __all__ = [
     "FieldAnnotation",
     "FieldIdItem",
     "Hat",
+    "HeaderItem",
     "HiddenapiClassDataItem",
     "HiddenapiRestrictionFlag",
     "Idx",

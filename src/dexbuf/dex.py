@@ -21,62 +21,82 @@ from dexbuf.items import (
     MapList,
     MethodIdItem,
     ProtoIdItem,
+    StaticItem,
     StringDataItem,
     StringIdItem,
     TypeIdItem,
     TypeList,
 )
-from dexbuf.types import NO_INDEX, NO_OFFSET, Idx, Offset
+from dexbuf.types import NO_INDEX, NO_OFFSET, Count, Idx, Offset
 
 __all__ = ["DexFile", "TableSequence"]
 
 
-class TableSequence[T](Sequence[T]):
+class TableSequence[T: StaticItem](Sequence[T]):
     """Lazy zero-allocation indexed view over a contiguous table of DEX items.
 
     See https://source.android.com/docs/core/runtime/dex-format
     """
 
-    __slots__ = ("_buffer", "_count", "_item_cls", "_offset", "_stride")
+    __slots__ = ("_buffer", "_item_cls", "_offset", "_size", "_stride")
 
     def __init__(
         self,
         buffer: memoryview,
-        offset: int,
-        count: int,
-        stride: int,
-        item_cls: Any,
+        offset: Offset[T] | int,
+        size: Count[T] | int,
+        item_cls: type[T],
+        stride: int | None = None,
     ) -> None:
         self._buffer = buffer
-        self._offset = offset
-        self._count = count
-        self._stride = stride
+        self._offset = Offset[T](offset)
+        self._size = Count[T](size)
         self._item_cls = item_cls
+        self._stride = item_cls.STRUCT.size if stride is None else stride
 
     def __len__(self) -> int:
-        return self._count
+        return self._size
+
+    @property
+    def offset(self) -> Offset[T]:
+        return self._offset
+
+    @property
+    def size(self) -> Count[T]:
+        return self._size
+
+    @property
+    def stride(self) -> int:
+        return self._stride
 
     @overload
-    def __getitem__(self, index: int) -> T: ...
+    def __getitem__(self, index: int | Idx[T]) -> T: ...
 
     @overload
     def __getitem__(self, index: slice) -> tuple[T, ...]: ...
 
-    def __getitem__(self, index: int | slice) -> T | tuple[T, ...]:
+    def __getitem__(self, index: int | Idx[T] | slice) -> T | tuple[T, ...]:
         if isinstance(index, slice):
-            return tuple(self[i] for i in range(*index.indices(self._count)))
+            return tuple(self[i] for i in range(*index.indices(self._size)))
 
         if index < 0:
-            index += self._count
-        if index < 0 or index >= self._count:
-            raise IndexError(f"Index {index} out of bounds for table of size {self._count}")
+            index += self._size
+        if index < 0 or index >= self._size:
+            raise IndexError(f"Index {index} out of bounds for table of size {self._size}")
 
         item_offset = self._offset + index * self._stride
-        return self._item_cls.from_buffer(self._buffer, Offset[T](item_offset))
+        return self._item_cls.from_buffer(self._buffer, Offset[Any](item_offset))
 
     def __iter__(self) -> Iterator[T]:
-        for i in range(self._count):
+        for i in range(self._size):
             yield self[i]
+
+    def get(self, idx: Idx[T]) -> T:
+        if idx == NO_INDEX or idx == 0xFFFF_FFFF:
+            raise ValueError(f"Invalid index: {idx}")
+        if idx < 0 or idx >= self._size:
+            raise IndexError(f"Index {idx} out of bounds for table of size {self._size}")
+        return self[idx]
 
 
 class DexFile:
@@ -90,46 +110,40 @@ class DexFile:
         self.header: HeaderItem = HeaderItem.from_buffer(self._buffer, Offset[HeaderItem](0))
         self._map_list: MapList | None = None
 
-        self.string_ids: Sequence[StringIdItem] = TableSequence(
+        self.string_ids: TableSequence[StringIdItem] = TableSequence(
             self._buffer,
             self.header.string_ids_off,
             self.header.string_ids_size,
-            4,
             StringIdItem,
         )
-        self.type_ids: Sequence[TypeIdItem] = TableSequence(
+        self.type_ids: TableSequence[TypeIdItem] = TableSequence(
             self._buffer,
             self.header.type_ids_off,
             self.header.type_ids_size,
-            4,
             TypeIdItem,
         )
-        self.proto_ids: Sequence[ProtoIdItem] = TableSequence(
+        self.proto_ids: TableSequence[ProtoIdItem] = TableSequence(
             self._buffer,
             self.header.proto_ids_off,
             self.header.proto_ids_size,
-            12,
             ProtoIdItem,
         )
-        self.field_ids: Sequence[FieldIdItem] = TableSequence(
+        self.field_ids: TableSequence[FieldIdItem] = TableSequence(
             self._buffer,
             self.header.field_ids_off,
             self.header.field_ids_size,
-            8,
             FieldIdItem,
         )
-        self.method_ids: Sequence[MethodIdItem] = TableSequence(
+        self.method_ids: TableSequence[MethodIdItem] = TableSequence(
             self._buffer,
             self.header.method_ids_off,
             self.header.method_ids_size,
-            8,
             MethodIdItem,
         )
-        self.class_defs: Sequence[ClassDefItem] = TableSequence(
+        self.class_defs: TableSequence[ClassDefItem] = TableSequence(
             self._buffer,
             self.header.class_defs_off,
             self.header.class_defs_size,
-            32,
             ClassDefItem,
         )
 
@@ -150,53 +164,37 @@ class DexFile:
 
     def get_string(self, idx: Idx[StringIdItem]) -> str:
         """Resolve StringIdItem index to string data."""
-        if idx == NO_INDEX or idx == 0xFFFF_FFFF:
-            raise ValueError(f"Invalid string index: {idx}")
-        string_id = self.get_string_id(idx)
+        string_id = self.string_ids.get(idx)
         return StringDataItem.from_buffer(self._buffer, string_id.string_data_off).data
 
     def get_string_id(self, idx: Idx[StringIdItem]) -> StringIdItem:
         """Fetch StringIdItem by index."""
-        if idx == NO_INDEX or idx == 0xFFFF_FFFF:
-            raise ValueError(f"Invalid string_id index: {idx}")
-        return self.string_ids[idx]
+        return self.string_ids.get(idx)
 
     def get_type_descriptor(self, idx: Idx[TypeIdItem]) -> str:
         """Resolve TypeIdItem index to type descriptor string."""
-        if idx == NO_INDEX or idx == 0xFFFF_FFFF:
-            raise ValueError(f"Invalid type_id index: {idx}")
-        type_id = self.get_type_id(idx)
+        type_id = self.type_ids.get(idx)
         return self.get_string(type_id.descriptor_idx)
 
     def get_type_id(self, idx: Idx[TypeIdItem]) -> TypeIdItem:
         """Fetch TypeIdItem by index."""
-        if idx == NO_INDEX or idx == 0xFFFF_FFFF:
-            raise ValueError(f"Invalid type_id index: {idx}")
-        return self.type_ids[idx]
+        return self.type_ids.get(idx)
 
     def get_proto_id(self, idx: Idx[ProtoIdItem]) -> ProtoIdItem:
         """Fetch ProtoIdItem by index."""
-        if idx == NO_INDEX or idx == 0xFFFF_FFFF:
-            raise ValueError(f"Invalid proto_id index: {idx}")
-        return self.proto_ids[idx]
+        return self.proto_ids.get(idx)
 
     def get_field_id(self, idx: Idx[FieldIdItem]) -> FieldIdItem:
         """Fetch FieldIdItem by index."""
-        if idx == NO_INDEX or idx == 0xFFFF_FFFF:
-            raise ValueError(f"Invalid field_id index: {idx}")
-        return self.field_ids[idx]
+        return self.field_ids.get(idx)
 
     def get_method_id(self, idx: Idx[MethodIdItem]) -> MethodIdItem:
         """Fetch MethodIdItem by index."""
-        if idx == NO_INDEX or idx == 0xFFFF_FFFF:
-            raise ValueError(f"Invalid method_id index: {idx}")
-        return self.method_ids[idx]
+        return self.method_ids.get(idx)
 
     def get_class_def(self, idx: Idx[ClassDefItem]) -> ClassDefItem:
         """Fetch ClassDefItem by index."""
-        if idx == NO_INDEX or idx == 0xFFFF_FFFF:
-            raise ValueError(f"Invalid class_def index: {idx}")
-        return self.class_defs[idx]
+        return self.class_defs.get(idx)
 
     def get_class_data(self, offset: Offset[ClassDataItem]) -> ClassDataItem:
         """Parse and return ClassDataItem from non-zero offset."""

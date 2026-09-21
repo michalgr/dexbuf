@@ -17,6 +17,7 @@ from dexbuf import (
     AnnotationsDirectoryItem,
     AnnotationSetItem,
     AnnotationVisibility,
+    CallSiteIdItem,
     ClassDataItem,
     ClassDefItem,
     CodeItem,
@@ -36,15 +37,20 @@ from dexbuf import (
     MapItem,
     MapList,
     MethodAnnotation,
+    MethodHandleItem,
     MethodIdItem,
     Offset,
+    ParameterAnnotation,
     ProtoIdItem,
+    StaticItem,
     StringDataItem,
     StringIdItem,
+    TryItem,
     TypeIdItem,
     TypeList,
     ValueType,
 )
+from dexbuf.dex import TableSequence
 
 
 def create_sample_dex() -> bytes:
@@ -527,6 +533,78 @@ class TestDexFile(unittest.TestCase):
         # memoryview
         dex_mv = DexFile(memoryview(self.dex_bytes))
         self.assertTrue(dex_mv.verify_checksum())
+
+    def test_static_item_protocol(self) -> None:
+        """Verify that all fixed-size DEX specification items satisfy StaticItem protocol."""
+        static_classes = [
+            StringIdItem,
+            TypeIdItem,
+            ProtoIdItem,
+            FieldIdItem,
+            MethodIdItem,
+            ClassDefItem,
+            CallSiteIdItem,
+            MethodHandleItem,
+            TypeList.Item,
+            TryItem,
+            AnnotationOffItem,
+            FieldAnnotation,
+            MethodAnnotation,
+            ParameterAnnotation,
+        ]
+        for cls in static_classes:
+            self.assertTrue(hasattr(cls, "STRUCT"))
+            dummy_item = cls.from_buffer(b"\x00" * cls.STRUCT.size)
+            self.assertTrue(
+                isinstance(dummy_item, StaticItem),
+                f"{cls.__name__} instance does not conform to StaticItem protocol",
+            )
+
+    def test_table_sequence_properties_and_stride_inference(self) -> None:
+        """Verify TableSequence offset, size, stride properties and stride inference."""
+        seq = TableSequence(
+            memoryview(self.dex_bytes),
+            self.dex.header.string_ids_off,
+            self.dex.header.string_ids_size,
+            StringIdItem,
+        )
+        self.assertEqual(seq.offset, self.dex.header.string_ids_off)
+        self.assertEqual(seq.size, self.dex.header.string_ids_size)
+        self.assertEqual(seq.stride, StringIdItem.STRUCT.size)
+        self.assertEqual(seq.stride, 4)
+
+        # Custom override stride
+        custom_seq = TableSequence(
+            memoryview(self.dex_bytes),
+            Offset[StringIdItem](0x70),
+            Count[StringIdItem](2),
+            StringIdItem,
+            stride=8,
+        )
+        self.assertEqual(custom_seq.stride, 8)
+
+    def test_table_sequence_get_method(self) -> None:
+        """Verify TableSequence.get() method behavior, NO_INDEX checks, and bounds validation."""
+        seq = TableSequence(
+            memoryview(self.dex_bytes),
+            self.dex.header.string_ids_off,
+            self.dex.header.string_ids_size,
+            StringIdItem,
+        )
+
+        item0 = seq.get(Idx[StringIdItem](0))
+        self.assertIsInstance(item0, StringIdItem)
+        self.assertEqual(item0, seq[0])
+
+        with self.assertRaises(ValueError):
+            seq.get(NO_INDEX)
+        with self.assertRaises(ValueError):
+            seq.get(Idx[StringIdItem](0xFFFF_FFFF))
+
+        with self.assertRaises(IndexError):
+            seq.get(Idx[StringIdItem](100))
+        with self.assertRaises(IndexError):
+            seq.get(Idx[StringIdItem](-1))
 
     def test_open_convenience_method(self) -> None:
         """Verify DexFile.open reads DEX file from filesystem."""

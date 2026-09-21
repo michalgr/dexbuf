@@ -75,6 +75,7 @@ class TestSanity(unittest.TestCase):
             "Payload",
             "ProtoIdItem",
             "Reg",
+            "StaticItem",
             "StringDataItem",
             "StringIdItem",
             "TryItem",

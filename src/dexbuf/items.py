@@ -7,7 +7,7 @@ import struct
 from collections.abc import Buffer, Iterator, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, ClassVar, Self, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, overload, runtime_checkable
 
 from dexbuf.cursor import Cursor
 from dexbuf.debug import skip_debug_instruction
@@ -66,12 +66,23 @@ __all__ = [
     "MethodIdItem",
     "ParameterAnnotation",
     "ProtoIdItem",
+    "StaticItem",
     "StringDataItem",
     "StringIdItem",
     "TryItem",
     "TypeIdItem",
     "TypeList",
 ]
+
+
+@runtime_checkable
+class StaticItem(Protocol):
+    """Protocol for fixed-size DEX specification items backed by a compiled struct.Struct."""
+
+    STRUCT: ClassVar[struct.Struct]
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: Offset[Any] = ...) -> Self: ...
 
 
 @dataclass(slots=True, frozen=True)
@@ -342,6 +353,11 @@ class TypeList:
             """Parse a TypeList.Item from a Cursor."""
             (type_idx,) = cursor.unpack(cls.STRUCT)
             return cls(type_idx=Idx[TypeIdItem](type_idx))
+
+        @classmethod
+        def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
+            """Parse a TypeList.Item from a buffer starting at offset."""
+            return cls.from_cursor(Cursor(buffer, offset))
 
         def to_bytes(self) -> bytes:
             """Encode this TypeList.Item to raw DEX bytes."""

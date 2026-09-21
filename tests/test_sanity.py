@@ -35,6 +35,7 @@ class TestSanity(unittest.TestCase):
             "ArgumentCount",
             "BranchOffset",
             "CallSiteIdItem",
+            "CentralDirectoryHeader",
             "ClassDataItem",
             "ClassDefItem",
             "CodeItem",
@@ -53,6 +54,7 @@ class TestSanity(unittest.TestCase):
             "EncodedMethod",
             "EncodedTypeAddrPair",
             "EncodedValue",
+            "EndOfCentralDirectoryRecord",
             "FieldAnnotation",
             "FieldIdItem",
             "Hat",
@@ -63,6 +65,7 @@ class TestSanity(unittest.TestCase):
             "Instruction",
             "ItemType",
             "Literal",
+            "LocalFileHeader",
             "MapItem",
             "MapItemType",
             "MapList",
@@ -82,6 +85,7 @@ class TestSanity(unittest.TestCase):
             "TypeIdItem",
             "TypeList",
             "ValueType",
+            "ZipArchive",
             "__version__",
         ]
         self.assertEqual(dexbuf.__all__, expected_all)

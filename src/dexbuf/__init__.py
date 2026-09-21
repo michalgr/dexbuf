@@ -76,6 +76,12 @@ from dexbuf.value import (
     EncodedValue,
     ValueType,
 )
+from dexbuf.zip import (
+    CentralDirectoryHeader,
+    EndOfCentralDirectoryRecord,
+    LocalFileHeader,
+    ZipArchive,
+)
 
 __version__ = "0.1.0.dev0"
 
@@ -100,6 +106,7 @@ __all__ = [
     "ArgumentCount",
     "BranchOffset",
     "CallSiteIdItem",
+    "CentralDirectoryHeader",
     "ClassDataItem",
     "ClassDefItem",
     "CodeItem",
@@ -118,6 +125,7 @@ __all__ = [
     "EncodedMethod",
     "EncodedTypeAddrPair",
     "EncodedValue",
+    "EndOfCentralDirectoryRecord",
     "FieldAnnotation",
     "FieldIdItem",
     "Hat",
@@ -128,6 +136,7 @@ __all__ = [
     "Instruction",
     "ItemType",
     "Literal",
+    "LocalFileHeader",
     "MapItem",
     "MapItemType",
     "MapList",
@@ -147,5 +156,6 @@ __all__ = [
     "TypeIdItem",
     "TypeList",
     "ValueType",
+    "ZipArchive",
     "__version__",
 ]

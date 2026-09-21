@@ -560,8 +560,8 @@ class TestDexFile(unittest.TestCase):
                 f"{cls.__name__} instance does not conform to StaticItem protocol",
             )
 
-    def test_table_sequence_properties_and_stride_inference(self) -> None:
-        """Verify TableSequence offset, size, stride properties and stride inference."""
+    def test_table_sequence_properties(self) -> None:
+        """Verify TableSequence offset and size properties."""
         seq = TableSequence(
             memoryview(self.dex_bytes),
             self.dex.header.string_ids_off,
@@ -570,18 +570,6 @@ class TestDexFile(unittest.TestCase):
         )
         self.assertEqual(seq.offset, self.dex.header.string_ids_off)
         self.assertEqual(seq.size, self.dex.header.string_ids_size)
-        self.assertEqual(seq.stride, StringIdItem.STRUCT.size)
-        self.assertEqual(seq.stride, 4)
-
-        # Custom override stride
-        custom_seq = TableSequence(
-            memoryview(self.dex_bytes),
-            Offset[StringIdItem](0x70),
-            Count[StringIdItem](2),
-            StringIdItem,
-            stride=8,
-        )
-        self.assertEqual(custom_seq.stride, 8)
 
     def test_table_sequence_get_method(self) -> None:
         """Verify TableSequence.get() method behavior, NO_INDEX checks, and bounds validation."""

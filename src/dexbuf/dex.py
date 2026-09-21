@@ -38,21 +38,19 @@ class TableSequence[T: StaticItem](Sequence[T]):
     See https://source.android.com/docs/core/runtime/dex-format
     """
 
-    __slots__ = ("_buffer", "_item_cls", "_offset", "_size", "_stride")
+    __slots__ = ("_buffer", "_item_cls", "_offset", "_size")
 
     def __init__(
         self,
         buffer: memoryview,
-        offset: Offset[T] | int,
-        size: Count[T] | int,
+        offset: Offset[T],
+        size: Count[T],
         item_cls: type[T],
-        stride: int | None = None,
     ) -> None:
         self._buffer = buffer
-        self._offset = Offset[T](offset)
-        self._size = Count[T](size)
+        self._offset = offset
+        self._size = size
         self._item_cls = item_cls
-        self._stride = item_cls.STRUCT.size if stride is None else stride
 
     def __len__(self) -> int:
         return self._size
@@ -65,17 +63,13 @@ class TableSequence[T: StaticItem](Sequence[T]):
     def size(self) -> Count[T]:
         return self._size
 
-    @property
-    def stride(self) -> int:
-        return self._stride
-
     @overload
-    def __getitem__(self, index: int | Idx[T]) -> T: ...
+    def __getitem__(self, index: int) -> T: ...
 
     @overload
     def __getitem__(self, index: slice) -> tuple[T, ...]: ...
 
-    def __getitem__(self, index: int | Idx[T] | slice) -> T | tuple[T, ...]:
+    def __getitem__(self, index: int | slice) -> T | tuple[T, ...]:
         if isinstance(index, slice):
             return tuple(self[i] for i in range(*index.indices(self._size)))
 
@@ -84,7 +78,7 @@ class TableSequence[T: StaticItem](Sequence[T]):
         if index < 0 or index >= self._size:
             raise IndexError(f"Index {index} out of bounds for table of size {self._size}")
 
-        item_offset = self._offset + index * self._stride
+        item_offset = self._offset + index * self._item_cls.STRUCT.size
         return self._item_cls.from_buffer(self._buffer, Offset[Any](item_offset))
 
     def __iter__(self) -> Iterator[T]:

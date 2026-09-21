@@ -43,6 +43,7 @@ class TestSanity(unittest.TestCase):
             "DebugInstruction",
             "DebugOpcode",
             "DebugPosition",
+            "DexFile",
             "EncodedAnnotation",
             "EncodedArray",
             "EncodedArrayItem",

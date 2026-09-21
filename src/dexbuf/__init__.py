@@ -9,6 +9,7 @@ from dexbuf.debug import (
     DebugOpcode,
     DebugPosition,
 )
+from dexbuf.dex import DexFile
 from dexbuf.instructions import IOP, Instruction, Opcode, Payload
 from dexbuf.items import (
     DEX_FILE_MAGIC,
@@ -106,6 +107,7 @@ __all__ = [
     "DebugInstruction",
     "DebugOpcode",
     "DebugPosition",
+    "DexFile",
     "EncodedAnnotation",
     "EncodedArray",
     "EncodedArrayItem",

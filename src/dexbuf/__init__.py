@@ -9,6 +9,12 @@ from dexbuf.debug import (
     DebugOpcode,
     DebugPosition,
 )
+from dexbuf.descriptors import (
+    descriptor_to_type_name,
+    format_method_descriptor,
+    parse_method_descriptor,
+    type_name_to_descriptor,
+)
 from dexbuf.dex import DexFile
 from dexbuf.flags import (
     CLASS_FLAGS_MASK,
@@ -171,7 +177,11 @@ __all__ = [
     "ValueType",
     "ZipArchive",
     "__version__",
+    "descriptor_to_type_name",
     "format_class_flags",
     "format_field_flags",
+    "format_method_descriptor",
     "format_method_flags",
+    "parse_method_descriptor",
+    "type_name_to_descriptor",
 ]

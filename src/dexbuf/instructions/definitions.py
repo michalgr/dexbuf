@@ -1371,12 +1371,12 @@ class UshrIntLit8(Format22b):
 
 
 @dataclass(slots=True, frozen=True)
-class InvokePolymorphic(Format45cc[MethodIdItem]):
+class InvokePolymorphic(Format45cc):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_POLYMORPHIC
 
 
 @dataclass(slots=True, frozen=True)
-class InvokePolymorphicRange(Format4rcc[MethodIdItem]):
+class InvokePolymorphicRange(Format4rcc):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_POLYMORPHIC_RANGE
 
 

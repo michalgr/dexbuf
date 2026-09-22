@@ -531,16 +531,16 @@ class Format3rc[RefT: RefItem](Instruction):
 
 
 @dataclass(slots=True, frozen=True)
-class Format45cc[RefT: RefItem](Instruction):
+class Format45cc(Instruction):
     """Format 45cc: op {vC, vD, vE, vF, vG}, meth@BBBB, proto@HHHH.
 
-    Operands: 0..5 reg operands, 16-bit ref index, 16-bit proto ref index.
+    Operands: 0..5 reg operands, 16-bit method ref index, 16-bit proto ref index.
     """
 
     STRUCT: ClassVar[struct.Struct] = struct.Struct("<BBHBBH")
 
     a: ArgumentCount
-    b: Idx[RefT]
+    b: Idx[MethodIdItem]
     c: Reg
     d: Reg
     e: Reg
@@ -553,7 +553,7 @@ class Format45cc[RefT: RefItem](Instruction):
         _, ag, bbbb, dc, fe, hhhh = cursor.unpack(cls.STRUCT)
         a = ArgumentCount((ag >> 4) & 0x0F)
         g = Reg(ag & 0x0F)
-        b = Idx[RefT](bbbb)
+        b = Idx[MethodIdItem](bbbb)
         c = Reg(dc & 0x0F)
         d = Reg((dc >> 4) & 0x0F)
         e = Reg(fe & 0x0F)
@@ -569,23 +569,28 @@ class Format45cc[RefT: RefItem](Instruction):
 
 
 @dataclass(slots=True, frozen=True)
-class Format4rcc[RefT: RefItem](Instruction):
+class Format4rcc(Instruction):
     """Format 4rcc: op {vCCCC .. vNNNN}, meth@BBBB, proto@HHHH.
 
-    Operands: reg range count A, 16-bit ref index B, start reg C, 16-bit proto ref index.
+    Operands: reg range count A, 16-bit method ref index B, start reg C, 16-bit proto ref index.
     """
 
     STRUCT: ClassVar[struct.Struct] = struct.Struct("<BBHHH")
 
     a: ArgumentCount
-    b: Idx[RefT]
+    b: Idx[MethodIdItem]
     c: Reg
     proto: Idx[ProtoIdItem]
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, b, c, proto = cursor.unpack(cls.STRUCT)
-        return cls(a=ArgumentCount(a), b=Idx[RefT](b), c=Reg(c), proto=Idx[ProtoIdItem](proto))
+        return cls(
+            a=ArgumentCount(a),
+            b=Idx[MethodIdItem](b),
+            c=Reg(c),
+            proto=Idx[ProtoIdItem](proto),
+        )
 
     def to_bytes(self) -> bytes:
         return self.STRUCT.pack(self.OPCODE, int(self.a), int(self.b), int(self.c), int(self.proto))

@@ -237,14 +237,12 @@ class Cursor:
                     return slice_mv
                 scan_start = hint_pos + 1
 
-        null_idx = -1
-        for i in range(scan_start, buf_len):
-            if buf[i] == 0:
-                null_idx = i
-                break
-
-        if null_idx == -1:
-            raise EOFError("Unterminated MUTF-8 string: reached EOF before null terminator")
+        try:
+            null_idx = buf.index(0, scan_start)
+        except ValueError:
+            raise EOFError(
+                "Unterminated MUTF-8 string: reached EOF before null terminator"
+            ) from None
 
         slice_mv = buf[self._offset : null_idx]
         self._offset = null_idx + 1

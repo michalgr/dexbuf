@@ -57,21 +57,20 @@ def create_sample_dex() -> bytes:
     """Construct a valid minimal DEX buffer in memory with complete tables and data sections."""
     header_size = 0x70
 
-    # 1. String Data Items
+    # 1. String Data Items (sorted in UTF-16 code point order as required by DEX spec)
     strings = [
-        "Ljava/lang/Object;",  # 0
+        "I",  # 0
         "LTestClass;",  # 1
-        "testMethod",  # 2
-        "testField",  # 3
-        "V",  # 4
-        "I",  # 5
-        "V",  # 6 (shorty)
+        "Ljava/lang/Object;",  # 2
+        "V",  # 3
+        "testField",  # 4
+        "testMethod",  # 5
     ]
     string_data_bytes = bytearray()
     string_data_offsets: list[int] = []
 
     # 2. Type List
-    type_list = TypeList(list=(TypeList.Item(type_idx=Idx[TypeIdItem](3)),))  # parameter: I
+    type_list = TypeList(list=(TypeList.Item(type_idx=Idx[TypeIdItem](0)),))  # parameter: I
     type_list_bytes = type_list.to_bytes()
 
     # 3. Code Item
@@ -129,7 +128,7 @@ def create_sample_dex() -> bytes:
 
     # Layout Data Section
     data_start_off = (
-        header_size + 4 * 7 + 4 * 4 + 12 * 1 + 8 * 1 + 8 * 1 + 32 * 1
+        header_size + 4 * len(strings) + 4 * 4 + 12 * 1 + 8 * 1 + 8 * 1 + 32 * 1
     )  # header + tables
     data_off = data_start_off
 
@@ -203,18 +202,18 @@ def create_sample_dex() -> bytes:
 
     type_ids_off = string_ids_off + len(string_ids_bytes)
     type_ids = [
-        TypeIdItem(descriptor_idx=Idx[StringIdItem](0)),  # 0: Object
-        TypeIdItem(descriptor_idx=Idx[StringIdItem](1)),  # 1: TestClass
-        TypeIdItem(descriptor_idx=Idx[StringIdItem](4)),  # 2: V
-        TypeIdItem(descriptor_idx=Idx[StringIdItem](5)),  # 3: I
+        TypeIdItem(descriptor_idx=Idx[StringIdItem](0)),  # 0: I
+        TypeIdItem(descriptor_idx=Idx[StringIdItem](1)),  # 1: LTestClass;
+        TypeIdItem(descriptor_idx=Idx[StringIdItem](2)),  # 2: Ljava/lang/Object;
+        TypeIdItem(descriptor_idx=Idx[StringIdItem](3)),  # 3: V
     ]
     type_ids_bytes = b"".join(t.to_bytes() for t in type_ids)
 
     proto_ids_off = type_ids_off + len(type_ids_bytes)
     proto_ids = [
         ProtoIdItem(
-            shorty_idx=Idx[StringIdItem](6),
-            return_type_idx=Idx[TypeIdItem](2),
+            shorty_idx=Idx[StringIdItem](3),
+            return_type_idx=Idx[TypeIdItem](3),
             parameters_off=Offset[TypeList](type_list_off),
         ),
     ]
@@ -224,8 +223,8 @@ def create_sample_dex() -> bytes:
     field_ids = [
         FieldIdItem(
             class_idx=Idx[TypeIdItem](1),
-            type_idx=Idx[TypeIdItem](3),
-            name_idx=Idx[StringIdItem](3),
+            type_idx=Idx[TypeIdItem](0),
+            name_idx=Idx[StringIdItem](4),
         ),
     ]
     field_ids_bytes = b"".join(f.to_bytes() for f in field_ids)
@@ -235,7 +234,7 @@ def create_sample_dex() -> bytes:
         MethodIdItem(
             class_idx=Idx[TypeIdItem](1),
             proto_idx=Idx[ProtoIdItem](0),
-            name_idx=Idx[StringIdItem](2),
+            name_idx=Idx[StringIdItem](5),
         ),
     ]
     method_ids_bytes = b"".join(m.to_bytes() for m in method_ids)
@@ -245,7 +244,7 @@ def create_sample_dex() -> bytes:
         ClassDefItem(
             class_idx=Idx[TypeIdItem](1),
             access_flags=0x0001,
-            superclass_idx=Idx[TypeIdItem](0),
+            superclass_idx=Idx[TypeIdItem](2),
             interfaces_off=NO_OFFSET,
             source_file_idx=NO_INDEX,
             annotations_off=Offset[AnnotationsDirectoryItem](ann_dir_off),
@@ -360,7 +359,7 @@ class TestDexFile(unittest.TestCase):
         """Verify header item parsing and lazy map_list property access."""
         self.assertEqual(self.dex.header.magic, DEX_FILE_MAGIC)
         self.assertEqual(self.dex.header.file_size, len(self.dex_bytes))
-        self.assertEqual(self.dex.header.string_ids_size, 7)
+        self.assertEqual(self.dex.header.string_ids_size, 6)
         self.assertEqual(self.dex.header.type_ids_size, 4)
         self.assertEqual(self.dex.header.proto_ids_size, 1)
         self.assertEqual(self.dex.header.field_ids_size, 1)
@@ -375,7 +374,7 @@ class TestDexFile(unittest.TestCase):
     def test_lazy_table_sequences_indexing_and_iteration(self) -> None:
         """Verify TableSequence len, indexing, bounds, negative indices, slices, and iter."""
         # string_ids sequence
-        self.assertEqual(len(self.dex.string_ids), 7)
+        self.assertEqual(len(self.dex.string_ids), 6)
         first_string_id = self.dex.string_ids[0]
         last_string_id = self.dex.string_ids[-1]
         self.assertIsInstance(first_string_id, StringIdItem)
@@ -389,7 +388,7 @@ class TestDexFile(unittest.TestCase):
 
         # Iteration
         iter_ids = list(self.dex.string_ids)
-        self.assertEqual(len(iter_ids), 7)
+        self.assertEqual(len(iter_ids), 6)
         self.assertEqual(iter_ids[0], first_string_id)
 
         # Bounds error
@@ -406,21 +405,22 @@ class TestDexFile(unittest.TestCase):
         self.assertEqual(len(self.dex.class_defs), 1)
 
         self.assertEqual(self.dex.type_ids[0].descriptor_idx, Idx[StringIdItem](0))
-        self.assertEqual(self.dex.proto_ids[0].shorty_idx, Idx[StringIdItem](6))
-        self.assertEqual(self.dex.field_ids[0].name_idx, Idx[StringIdItem](3))
-        self.assertEqual(self.dex.method_ids[0].name_idx, Idx[StringIdItem](2))
+        self.assertEqual(self.dex.proto_ids[0].shorty_idx, Idx[StringIdItem](3))
+        self.assertEqual(self.dex.field_ids[0].name_idx, Idx[StringIdItem](4))
+        self.assertEqual(self.dex.method_ids[0].name_idx, Idx[StringIdItem](5))
         self.assertEqual(self.dex.class_defs[0].class_idx, Idx[TypeIdItem](1))
 
     def test_dereferencing_getters(self) -> None:
         """Verify dereferencing getters for string, type descriptor, and item structs."""
         # get_string and get_string_id
-        self.assertEqual(self.dex.get_string(Idx[StringIdItem](0)), "Ljava/lang/Object;")
+        self.assertEqual(self.dex.get_string(Idx[StringIdItem](0)), "I")
         self.assertEqual(self.dex.get_string(Idx[StringIdItem](1)), "LTestClass;")
         self.assertEqual(self.dex.get_string_id(Idx[StringIdItem](0)), self.dex.string_ids[0])
 
         # get_type_descriptor and get_type_id
-        self.assertEqual(self.dex.get_type_descriptor(Idx[TypeIdItem](0)), "Ljava/lang/Object;")
+        self.assertEqual(self.dex.get_type_descriptor(Idx[TypeIdItem](0)), "I")
         self.assertEqual(self.dex.get_type_descriptor(Idx[TypeIdItem](1)), "LTestClass;")
+        self.assertEqual(self.dex.get_type_descriptor(Idx[TypeIdItem](2)), "Ljava/lang/Object;")
         self.assertEqual(self.dex.get_type_id(Idx[TypeIdItem](0)), self.dex.type_ids[0])
 
         # get_proto_id, get_field_id, get_method_id, get_class_def
@@ -450,7 +450,7 @@ class TestDexFile(unittest.TestCase):
         type_list = self.dex.get_type_list(proto.parameters_off)
         self.assertIsInstance(type_list, TypeList)
         self.assertEqual(len(type_list), 1)
-        self.assertEqual(type_list[0].type_idx, Idx[TypeIdItem](3))
+        self.assertEqual(type_list[0].type_idx, Idx[TypeIdItem](0))
 
         # get_annotations_directory
         ann_dir = self.dex.get_annotations_directory(class_def.annotations_off)
@@ -603,7 +603,78 @@ class TestDexFile(unittest.TestCase):
             opened_dex = DexFile.open(tmp.name)
             self.assertTrue(opened_dex.verify_checksum())
             self.assertTrue(opened_dex.verify_signature())
-            self.assertEqual(opened_dex.get_string(Idx[StringIdItem](0)), "Ljava/lang/Object;")
+            self.assertEqual(opened_dex.get_string(Idx[StringIdItem](0)), "I")
+
+    def test_find_string_id(self) -> None:
+        """Verify binary search lookup of existing and non-existent strings."""
+        # Existing strings (first, middle, last)
+        self.assertEqual(self.dex.find_string_id("I"), Idx[StringIdItem](0))
+        self.assertEqual(self.dex.find_string_id("LTestClass;"), Idx[StringIdItem](1))
+        self.assertEqual(self.dex.find_string_id("Ljava/lang/Object;"), Idx[StringIdItem](2))
+        self.assertEqual(self.dex.find_string_id("V"), Idx[StringIdItem](3))
+        self.assertEqual(self.dex.find_string_id("testField"), Idx[StringIdItem](4))
+        self.assertEqual(self.dex.find_string_id("testMethod"), Idx[StringIdItem](5))
+
+        # Non-existent strings (before first, between elements, after last)
+        self.assertIsNone(self.dex.find_string_id("A"))
+        self.assertIsNone(self.dex.find_string_id("H"))
+        self.assertIsNone(self.dex.find_string_id("I_between"))
+        self.assertIsNone(self.dex.find_string_id("LTestClassA"))
+        self.assertIsNone(self.dex.find_string_id("Ljava/lang/P"))
+        self.assertIsNone(self.dex.find_string_id("z"))
+        self.assertIsNone(self.dex.find_string_id("testMethodExtra"))
+
+        # Empty string table
+        buf = bytearray(self.dex_bytes)
+        # Set string_ids_size (at offset 0x38 in DEX header) to 0
+        buf[0x38:0x3C] = (0).to_bytes(4, "little")
+        empty_dex = DexFile(bytes(buf))
+        self.assertEqual(len(empty_dex.string_ids), 0)
+        self.assertIsNone(empty_dex.find_string_id("I"))
+
+    def test_find_type_id(self) -> None:
+        """Verify binary search lookup of existing and non-existent type descriptors."""
+        # Existing type descriptors (first, middle, last)
+        self.assertEqual(self.dex.find_type_id("I"), Idx[TypeIdItem](0))
+        self.assertEqual(self.dex.find_type_id("LTestClass;"), Idx[TypeIdItem](1))
+        self.assertEqual(self.dex.find_type_id("Ljava/lang/Object;"), Idx[TypeIdItem](2))
+        self.assertEqual(self.dex.find_type_id("V"), Idx[TypeIdItem](3))
+
+        # Non-existent type descriptors (before first, between elements, after last)
+        self.assertIsNone(self.dex.find_type_id("A"))
+        self.assertIsNone(self.dex.find_type_id("LNonExistent;"))
+        self.assertIsNone(self.dex.find_type_id("Z"))
+
+        # Empty type table
+        buf = bytearray(self.dex_bytes)
+        # Set type_ids_size (at offset 0x40 in DEX header) to 0
+        buf[0x40:0x44] = (0).to_bytes(4, "little")
+        empty_dex = DexFile(bytes(buf))
+        self.assertEqual(len(empty_dex.type_ids), 0)
+        self.assertIsNone(empty_dex.find_type_id("LTestClass;"))
+
+    def test_find_class_def(self) -> None:
+        """Verify lookup of ClassDefItem by descriptor string and by Idx[TypeIdItem]."""
+        # Lookup by descriptor string (existing class)
+        class_def = self.dex.find_class_def("LTestClass;")
+        self.assertIsInstance(class_def, ClassDefItem)
+        self.assertEqual(class_def, self.dex.class_defs[0])
+        self.assertEqual(class_def.class_idx, Idx[TypeIdItem](1))  # type: ignore[union-attr]
+
+        # Lookup by Idx[TypeIdItem] (existing class)
+        class_def_by_idx = self.dex.find_class_def(Idx[TypeIdItem](1))
+        self.assertEqual(class_def_by_idx, class_def)
+
+        # Lookup by descriptor string (non-existent class, but existing type)
+        self.assertIsNone(self.dex.find_class_def("Ljava/lang/Object;"))
+
+        # Lookup by descriptor string (non-existent type)
+        self.assertIsNone(self.dex.find_class_def("LNonExistent;"))
+
+        # Lookup by Idx[TypeIdItem] (non-existent class index)
+        self.assertIsNone(self.dex.find_class_def(Idx[TypeIdItem](0)))
+        self.assertIsNone(self.dex.find_class_def(Idx[TypeIdItem](2)))
+        self.assertIsNone(self.dex.find_class_def(Idx[TypeIdItem](3)))
 
 
 if __name__ == "__main__":

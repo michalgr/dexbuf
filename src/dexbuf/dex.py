@@ -165,6 +165,21 @@ class DexFile:
         """Fetch StringIdItem by index."""
         return self.string_ids.get(idx)
 
+    def find_string_id(self, s: str) -> Idx[StringIdItem] | None:
+        """Find StringIdItem index by string value using binary search."""
+        low = 0
+        high = len(self.string_ids) - 1
+        while low <= high:
+            mid = (low + high) // 2
+            candidate = self.get_string(Idx[StringIdItem](mid))
+            if candidate == s:
+                return Idx[StringIdItem](mid)
+            if candidate < s:
+                low = mid + 1
+            else:
+                high = mid - 1
+        return None
+
     def get_type_descriptor(self, idx: Idx[TypeIdItem]) -> str:
         """Resolve TypeIdItem index to type descriptor string."""
         type_id = self.type_ids.get(idx)
@@ -173,6 +188,21 @@ class DexFile:
     def get_type_id(self, idx: Idx[TypeIdItem]) -> TypeIdItem:
         """Fetch TypeIdItem by index."""
         return self.type_ids.get(idx)
+
+    def find_type_id(self, descriptor: str) -> Idx[TypeIdItem] | None:
+        """Find TypeIdItem index by type descriptor string using binary search."""
+        low = 0
+        high = len(self.type_ids) - 1
+        while low <= high:
+            mid = (low + high) // 2
+            candidate = self.get_type_descriptor(Idx[TypeIdItem](mid))
+            if candidate == descriptor:
+                return Idx[TypeIdItem](mid)
+            if candidate < descriptor:
+                low = mid + 1
+            else:
+                high = mid - 1
+        return None
 
     def get_proto_id(self, idx: Idx[ProtoIdItem]) -> ProtoIdItem:
         """Fetch ProtoIdItem by index."""
@@ -189,6 +219,20 @@ class DexFile:
     def get_class_def(self, idx: Idx[ClassDefItem]) -> ClassDefItem:
         """Fetch ClassDefItem by index."""
         return self.class_defs.get(idx)
+
+    def find_class_def(self, target: Idx[TypeIdItem] | str) -> ClassDefItem | None:
+        """Find ClassDefItem by type descriptor or type index via stateless linear scan."""
+        if isinstance(target, str):
+            type_idx = self.find_type_id(target)
+            if type_idx is None:
+                return None
+        else:
+            type_idx = target
+
+        for cd in self.class_defs:
+            if cd.class_idx == type_idx:
+                return cd
+        return None
 
     def get_class_data(self, offset: Offset[ClassDataItem]) -> ClassDataItem:
         """Parse and return ClassDataItem from non-zero offset."""

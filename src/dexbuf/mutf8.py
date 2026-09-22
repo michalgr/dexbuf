@@ -58,20 +58,12 @@ def encode_mutf8(s: str, null_terminated: bool = True) -> bytes:
     return bytes(res)
 
 
-def decode_mutf8_utf16_units(
-    data: Buffer, expected_utf16_size: int | None = None
-) -> tuple[int, ...]:
-    """Decode MUTF-8 bytes into a sequence of UTF-16 code units (tuple[int, ...]).
+def _is_ascii_mutf8(buf: memoryview) -> bool:
+    return all(1 <= b <= 0x7F for b in buf)
 
-    See https://source.android.com/docs/core/runtime/dex-format#mutf-8
-    """
-    buf = memoryview(data).cast("B")
+
+def _decode_mutf8_units_body(buf: memoryview, expected_utf16_size: int | None = None) -> list[int]:
     buf_len = len(buf)
-
-    if expected_utf16_size is None or expected_utf16_size == buf_len:
-        if all(1 <= b <= 0x7F for b in buf):
-            return tuple(buf)
-
     units: list[int] = []
     idx = 0
     while idx < buf_len:
@@ -110,7 +102,23 @@ def decode_mutf8_utf16_units(
             f"UTF-16 code units, got {len(units)}"
         )
 
-    return tuple(units)
+    return units
+
+
+def decode_mutf8_utf16_units(
+    data: Buffer, expected_utf16_size: int | None = None
+) -> tuple[int, ...]:
+    """Decode MUTF-8 bytes into a sequence of UTF-16 code units (tuple[int, ...]).
+
+    See https://source.android.com/docs/core/runtime/dex-format#mutf-8
+    """
+    buf = memoryview(data).cast("B")
+    buf_len = len(buf)
+
+    if (expected_utf16_size is None or expected_utf16_size == buf_len) and _is_ascii_mutf8(buf):
+        return tuple(buf)
+
+    return tuple(_decode_mutf8_units_body(buf, expected_utf16_size=expected_utf16_size))
 
 
 def decode_mutf8(data: Buffer, expected_utf16_size: int | None = None) -> str:
@@ -121,12 +129,10 @@ def decode_mutf8(data: Buffer, expected_utf16_size: int | None = None) -> str:
     buf = memoryview(data).cast("B")
     buf_len = len(buf)
 
-    if expected_utf16_size is None or expected_utf16_size == buf_len:
-        cand_bytes = bytes(buf)
-        if all(1 <= b <= 0x7F for b in cand_bytes):
-            return cand_bytes.decode("ascii")
+    if (expected_utf16_size is None or expected_utf16_size == buf_len) and _is_ascii_mutf8(buf):
+        return bytes(buf).decode("ascii")
 
-    units = decode_mutf8_utf16_units(buf, expected_utf16_size=expected_utf16_size)
+    units = _decode_mutf8_units_body(buf, expected_utf16_size=expected_utf16_size)
     if not units:
         return ""
 
@@ -140,6 +146,4 @@ def count_mutf8_utf16_units(data: Buffer) -> int:
     See https://source.android.com/docs/core/runtime/dex-format#mutf-8
     """
     buf = memoryview(data).cast("B")
-    if all(1 <= b <= 0x7F for b in buf):
-        return len(buf)
-    return len(decode_mutf8_utf16_units(buf))
+    return sum(1 for b in buf if (b & 0xC0) != 0x80)

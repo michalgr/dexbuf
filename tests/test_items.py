@@ -293,11 +293,14 @@ class TestStringDataItem(unittest.TestCase):
         """Test StringDataItem creation from string."""
         item = StringDataItem.from_str("Hello, DEX!")
         self.assertEqual(item.utf16_size, 11)
-        self.assertEqual(item.data, "Hello, DEX!")
+        self.assertIsInstance(item.data, memoryview)
+        self.assertEqual(bytes(item.data), b"Hello, DEX!")
+        self.assertEqual(item.decode(), "Hello, DEX!")
+        self.assertEqual(str(item), "Hello, DEX!")
 
         supp_item = StringDataItem.from_str("𐀀World")
         self.assertEqual(supp_item.utf16_size, 7)
-        self.assertEqual(supp_item.data, "𐀀World")
+        self.assertEqual(supp_item.decode(), "𐀀World")
 
     def test_padding_attribute(self) -> None:
         """Test StringDataItem PADDING class attribute and fields metadata."""
@@ -305,19 +308,19 @@ class TestStringDataItem(unittest.TestCase):
 
         # Verify PADDING is not in dataclasses.fields
         field_names = [f.name for f in dataclasses.fields(StringDataItem)]
-        self.assertEqual(field_names, ["data"])
+        self.assertEqual(field_names, ["data", "utf16_size"])
         self.assertNotIn("PADDING", field_names)
 
     def test_immutability(self) -> None:
         """Test that StringDataItem is frozen and slotted."""
         item = StringDataItem.from_str("Frozen")
         with self.assertRaises(FrozenInstanceError):
-            item.data = "Modified"  # type: ignore[misc]
-        with self.assertRaises((TypeError, AttributeError)):
+            item.data = memoryview(b"Modified")  # type: ignore[misc]
+        with self.assertRaises(FrozenInstanceError):
             item.utf16_size = 10  # type: ignore[misc]
 
         # Verify __slots__ is set on the class
-        self.assertEqual(item.__slots__, ("data",))
+        self.assertEqual(item.__slots__, ("data", "utf16_size"))
 
     def test_to_bytes_and_from_cursor(self) -> None:
         """Test encoding StringDataItem to bytes and parsing via Cursor."""
@@ -329,8 +332,29 @@ class TestStringDataItem(unittest.TestCase):
 
         self.assertEqual(parsed, original)
         self.assertEqual(parsed.utf16_size, 7)
-        self.assertEqual(parsed.data, "Café 𐀀")
+        self.assertEqual(parsed.decode(), "Café 𐀀")
         self.assertTrue(cursor.is_eof)
+
+    def test_conversion_methods(self) -> None:
+        """Test on-demand conversion methods on StringDataItem."""
+        item = StringDataItem.from_str("Café 𐀀")
+
+        # raw_bytes & to_raw_bytes
+        self.assertEqual(item.raw_bytes, b"Caf\xc3\xa9 \xed\xa0\x80\xed\xb0\x80")
+        self.assertEqual(item.to_raw_bytes(), b"Caf\xc3\xa9 \xed\xa0\x80\xed\xb0\x80")
+
+        # decode & __str__
+        self.assertEqual(item.decode(), "Café 𐀀")
+        self.assertEqual(str(item), "Café 𐀀")
+
+        # to_utf16 & utf16_code_units
+        expected_utf16 = (67, 97, 102, 0x00E9, 32, 0xD800, 0xDC00)
+        self.assertEqual(item.to_utf16(), expected_utf16)
+        self.assertEqual(item.utf16_code_units(), expected_utf16)
+
+        # code_points
+        expected_cp = (67, 97, 102, 0x00E9, 32, 0x10000)
+        self.assertEqual(item.code_points(), expected_cp)
 
     def test_from_buffer_with_typed_offset(self) -> None:
         """Test parsing StringDataItem from buffer with typed Offset."""
@@ -366,7 +390,7 @@ class TestStringDataItem(unittest.TestCase):
             encoded = item.to_bytes()
             decoded = StringDataItem.from_buffer(encoded)
             self.assertEqual(decoded, item)
-            self.assertEqual(decoded.data, s)
+            self.assertEqual(decoded.decode(), s)
 
 
 class TestStringIdItem(unittest.TestCase):

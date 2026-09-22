@@ -10,6 +10,7 @@ from typing import ClassVar
 from dexbuf.cursor import Cursor
 from dexbuf.instructions.formats import (
     Format3rc,
+    Format4rcc,
     Format10t,
     Format10x,
     Format11n,
@@ -32,6 +33,7 @@ from dexbuf.instructions.formats import (
     Format31t,
     Format32x,
     Format35c,
+    Format45cc,
     Format51l,
     Instruction,
 )
@@ -1369,12 +1371,12 @@ class UshrIntLit8(Format22b):
 
 
 @dataclass(slots=True, frozen=True)
-class InvokePolymorphic(Format35c[MethodIdItem]):
+class InvokePolymorphic(Format45cc[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_POLYMORPHIC
 
 
 @dataclass(slots=True, frozen=True)
-class InvokePolymorphicRange(Format3rc[MethodIdItem]):
+class InvokePolymorphicRange(Format4rcc[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_POLYMORPHIC_RANGE
 
 

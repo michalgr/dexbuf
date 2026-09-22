@@ -12,11 +12,13 @@ from dexbuf.instructions.definitions import (
     Const,
     Const4,
     ConstString,
+    InvokePolymorphic,
+    InvokePolymorphicRange,
     Nop,
     ReturnVoid,
     parse_instruction,
 )
-from dexbuf.types import Literal, Reg
+from dexbuf.types import ArgumentCount, Idx, Literal, Reg
 
 
 class TestInstructionDefinitions(unittest.TestCase):
@@ -27,6 +29,8 @@ class TestInstructionDefinitions(unittest.TestCase):
         self.assertIs(OPCODE_MAP[Opcode.RETURN_VOID], ReturnVoid)
         self.assertIs(OPCODE_MAP[Opcode.CONST_STRING], ConstString)
         self.assertIs(OPCODE_MAP[Opcode.ADD_INT], AddInt)
+        self.assertIs(OPCODE_MAP[Opcode.INVOKE_POLYMORPHIC], InvokePolymorphic)
+        self.assertIs(OPCODE_MAP[Opcode.INVOKE_POLYMORPHIC_RANGE], InvokePolymorphicRange)
 
     def test_immutability(self) -> None:
         """Verify concrete instructions are frozen dataclasses."""
@@ -48,6 +52,34 @@ class TestInstructionDefinitions(unittest.TestCase):
         self.assertIsInstance(parsed_const, Const)
         self.assertEqual(parsed_const.a, 3)
         self.assertEqual(parsed_const.b, 42)
+
+        # InvokePolymorphic
+        inst_poly = InvokePolymorphic(
+            a=ArgumentCount(2),
+            b=Idx(10),
+            c=Reg(1),
+            d=Reg(2),
+            e=Reg(0),
+            f=Reg(0),
+            g=Reg(0),
+            proto=Idx(20),
+        )
+        raw_poly = inst_poly.to_bytes()
+        parsed_poly = parse_instruction(Cursor(raw_poly))
+        self.assertIsInstance(parsed_poly, InvokePolymorphic)
+        self.assertEqual(parsed_poly, inst_poly)
+
+        # InvokePolymorphicRange
+        inst_poly_range = InvokePolymorphicRange(
+            a=ArgumentCount(5),
+            b=Idx(100),
+            c=Reg(2),
+            proto=Idx(200),
+        )
+        raw_poly_range = inst_poly_range.to_bytes()
+        parsed_poly_range = parse_instruction(Cursor(raw_poly_range))
+        self.assertIsInstance(parsed_poly_range, InvokePolymorphicRange)
+        self.assertEqual(parsed_poly_range, inst_poly_range)
 
     def test_parse_instruction_invalid_opcode(self) -> None:
         """Verify parse_instruction raises ValueError on unknown opcode."""

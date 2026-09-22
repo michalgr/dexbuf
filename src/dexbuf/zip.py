@@ -6,7 +6,8 @@ import struct
 import zlib
 from collections.abc import Buffer, Iterator
 from dataclasses import dataclass
-from typing import Any, ClassVar, Self
+from types import TracebackType
+from typing import BinaryIO, ClassVar, Self
 
 from dexbuf.cursor import Cursor
 
@@ -246,7 +247,7 @@ class ZipArchive:
 
     def __init__(self, buffer: Buffer) -> None:
         self._buffer: memoryview = memoryview(buffer).cast("B")
-        self._file: Any = None
+        self._file: BinaryIO | None = None
         self._mmap: mmap_module.mmap | None = None
 
         buf_len = len(self._buffer)
@@ -312,7 +313,12 @@ class ZipArchive:
     def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.close()
 
     def iter_entries(self) -> Iterator[CentralDirectoryHeader]:

@@ -87,6 +87,10 @@ class TestSanity(unittest.TestCase):
             "ValueType",
             "ZipArchive",
             "__version__",
+            "descriptor_to_type_name",
+            "format_method_descriptor",
+            "parse_method_descriptor",
+            "type_name_to_descriptor",
         ]
         self.assertEqual(dexbuf.__all__, expected_all)
 

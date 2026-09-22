@@ -9,6 +9,12 @@ from dexbuf.debug import (
     DebugOpcode,
     DebugPosition,
 )
+from dexbuf.descriptors import (
+    descriptor_to_type_name,
+    format_method_descriptor,
+    parse_method_descriptor,
+    type_name_to_descriptor,
+)
 from dexbuf.dex import DexFile
 from dexbuf.instructions import IOP, Instruction, Opcode, Payload
 from dexbuf.items import (
@@ -158,4 +164,8 @@ __all__ = [
     "ValueType",
     "ZipArchive",
     "__version__",
+    "descriptor_to_type_name",
+    "format_method_descriptor",
+    "parse_method_descriptor",
+    "type_name_to_descriptor",
 ]

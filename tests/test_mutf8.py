@@ -4,15 +4,56 @@ import unittest
 
 from dexbuf.cursor import Cursor
 from dexbuf.mutf8 import (
+    compare_mutf8,
+    compare_utf16,
     count_mutf8_utf16_units,
     decode_mutf8,
     decode_mutf8_utf16_units,
     encode_mutf8,
     utf16_code_units,
+    utf16_sort_key,
 )
 
 
 class TestMUTF8(unittest.TestCase):
+    def test_utf16_sort_key_and_compare_utf16(self) -> None:
+        """Test utf16_sort_key and compare_utf16 across boundary cases."""
+        # 1. Null vs \x01
+        self.assertEqual(compare_utf16("\x00", "\x01"), -1)
+        self.assertEqual(compare_utf16("\x01", "\x00"), 1)
+        self.assertEqual(compare_utf16("\x00", "\x00"), 0)
+
+        # 2. Supplementary U+10000 vs High BMP U+E000
+        # In Python str comparison (code points), '\U00010000' > '\uE000'
+        self.assertGreater("\U00010000", "\ue000")
+        # In UTF-16 code units, U+10000 -> 0xD800 0xDC00, 0xD800 < 0xE000, so compare_utf16 is -1
+        self.assertEqual(compare_utf16("\U00010000", "\ue000"), -1)
+        self.assertEqual(compare_utf16("\ue000", "\U00010000"), 1)
+
+        # 3. Equal strings
+        self.assertEqual(compare_utf16("hello", "hello"), 0)
+
+        # 4. utf16_sort_key matches big-endian bytes
+        self.assertEqual(utf16_sort_key("\x00"), b"\x00\x00")
+        self.assertEqual(utf16_sort_key("\ue000"), b"\xe0\x00")
+        self.assertEqual(utf16_sort_key("\U00010000"), b"\xd8\x00\xdc\x00")
+
+    def test_compare_mutf8(self) -> None:
+        """Test compare_mutf8 byte comparison with b'\\xc0\\x80' translation."""
+        # Null vs \x01
+        # MUTF-8 for \x00 is b"\xc0\x80", for \x01 is b"\x01"
+        self.assertEqual(compare_mutf8(b"\xc0\x80", b"\x01"), -1)
+        self.assertEqual(compare_mutf8(b"\x01", b"\xc0\x80"), 1)
+
+        # Supplementary U+10000 (b"\xed\xa0\x80\xed\xb0\x80") vs U+E000 (b"\xee\x80\x80")
+        mutf8_supp = encode_mutf8("\U00010000", null_terminated=False)
+        mutf8_bmp = encode_mutf8("\ue000", null_terminated=False)
+        self.assertEqual(compare_mutf8(mutf8_supp, mutf8_bmp), -1)
+        self.assertEqual(compare_mutf8(mutf8_bmp, mutf8_supp), 1)
+
+        # Equal MUTF-8 sequences
+        self.assertEqual(compare_mutf8(mutf8_supp, mutf8_supp), 0)
+
     def test_utf16_code_units(self) -> None:
         """Test counting UTF-16 code units for various string compositions."""
         self.assertEqual(utf16_code_units("Hello"), 5)

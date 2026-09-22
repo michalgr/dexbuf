@@ -639,6 +639,97 @@ class TestDexFile(unittest.TestCase):
         self.assertEqual(len(empty_dex.string_ids), 0)
         self.assertIsNone(empty_dex.find_string_id("I"))
 
+    def test_find_string_id_and_type_id_utf16_ordering(self) -> None:
+        """Verify binary search ordering for supplementary chars vs high-BMP chars."""
+        # Note: In Unicode code point order (Python < operator): "\uE000" < "\U00010000".
+        # But in UTF-16 code unit order: "\U00010000" (0xD800 0xDC00) < "\uE000" (0xE000).
+        # We also include embedded null "\x00" which translates from b"\xc0\x80" to b"\x00".
+        # Strings sorted strictly by UTF-16 code units (and transformed MUTF-8 bytes):
+        # 1. '\x00'       -> 0x0000
+        # 2. 'A'          -> 0x0041
+        # 3. '\U00010000' -> 0xD800, 0xDC00
+        # 4. '\uE000'     -> 0xE000
+        ordered_strings = [
+            "\x00",
+            "A",
+            "\U00010000",
+            "\ue000",
+        ]
+
+        # Construct a custom DEX buffer with these strings in strict UTF-16 code unit order
+        header_size = 0x70
+        string_data_bytes = bytearray()
+        string_data_offsets: list[int] = []
+
+        data_start_off = header_size + 4 * len(ordered_strings) + 4 * len(ordered_strings)
+        data_off = data_start_off
+
+        for s in ordered_strings:
+            item = StringDataItem.from_str(s)
+            string_data_offsets.append(data_off)
+            b = item.to_bytes()
+            string_data_bytes.extend(b)
+            data_off += len(b)
+
+        string_ids_off = header_size
+        string_ids_bytes = b"".join(
+            StringIdItem(string_data_off=Offset[StringDataItem](off)).to_bytes()
+            for off in string_data_offsets
+        )
+
+        type_ids_off = string_ids_off + len(string_ids_bytes)
+        type_ids = [
+            TypeIdItem(descriptor_idx=Idx[StringIdItem](i)) for i in range(len(ordered_strings))
+        ]
+        type_ids_bytes = b"".join(t.to_bytes() for t in type_ids)
+
+        header = HeaderItem(
+            magic=DEX_FILE_MAGIC,
+            checksum=0,
+            signature=b"\x00" * 20,
+            file_size=data_off,
+            header_size=header_size,
+            endian_tag=ENDIAN_CONSTANT,
+            link_size=0,
+            link_off=NO_OFFSET,
+            map_off=NO_OFFSET,
+            string_ids_size=Count[StringIdItem](len(ordered_strings)),
+            string_ids_off=Offset[StringIdItem](string_ids_off),
+            type_ids_size=Count[TypeIdItem](len(type_ids)),
+            type_ids_off=Offset[TypeIdItem](type_ids_off),
+            proto_ids_size=Count[ProtoIdItem](0),
+            proto_ids_off=NO_OFFSET,
+            field_ids_size=Count[FieldIdItem](0),
+            field_ids_off=NO_OFFSET,
+            method_ids_size=Count[MethodIdItem](0),
+            method_ids_off=NO_OFFSET,
+            class_defs_size=Count[ClassDefItem](0),
+            class_defs_off=NO_OFFSET,
+            data_size=data_off - data_start_off,
+            data_off=Offset[Any](data_start_off),
+        )
+
+        buf = bytearray(header.to_bytes())
+        buf.extend(string_ids_bytes)
+        buf.extend(type_ids_bytes)
+        buf.extend(string_data_bytes)
+
+        dex = DexFile(bytes(buf))
+
+        # Test find_string_id for all elements
+        for idx, s in enumerate(ordered_strings):
+            found_str_idx = dex.find_string_id(s)
+            self.assertEqual(found_str_idx, Idx[StringIdItem](idx), f"Failed to find string '{s}'")
+
+            found_type_idx = dex.find_type_id(s)
+            self.assertEqual(
+                found_type_idx, Idx[TypeIdItem](idx), f"Failed to find type descriptor '{s}'"
+            )
+
+        # Test non-existent strings/descriptors
+        self.assertIsNone(dex.find_string_id("B"))
+        self.assertIsNone(dex.find_type_id("B"))
+
     def test_find_type_id(self) -> None:
         """Verify binary search lookup of existing and non-existent type descriptors."""
         # Existing type descriptors (first, middle, last)

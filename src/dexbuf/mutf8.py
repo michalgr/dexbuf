@@ -7,12 +7,57 @@ import struct
 from collections.abc import Buffer
 
 __all__ = [
+    "compare_mutf8",
+    "compare_utf16",
     "count_mutf8_utf16_units",
     "decode_mutf8",
     "decode_mutf8_utf16_units",
     "encode_mutf8",
     "utf16_code_units",
+    "utf16_sort_key",
 ]
+
+
+def utf16_sort_key(s: str) -> bytes:
+    """Return UTF-16 big-endian byte representation for code unit comparison.
+
+    See https://source.android.com/docs/core/runtime/dex-format#mutf-8
+    """
+    return s.encode("utf-16be", errors="surrogatepass")
+
+
+def compare_utf16(s1: str, s2: str) -> int:
+    """Compare two Python strings using UTF-16 code unit ordering.
+
+    Returns negative if s1 < s2, 0 if s1 == s2, positive if s1 > s2.
+
+    See https://source.android.com/docs/core/runtime/dex-format#mutf-8
+    """
+    k1 = utf16_sort_key(s1)
+    k2 = utf16_sort_key(s2)
+    if k1 == k2:
+        return 0
+    return -1 if k1 < k2 else 1
+
+
+def compare_mutf8(b1: Buffer, b2: Buffer) -> int:
+    """Compare MUTF-8 byte sequences using the b"\\xc0\\x80" -> b"\\x00" translation.
+
+    Returns negative if b1 < b2, 0 if b1 == b2, positive if b1 > b2.
+
+    See https://source.android.com/docs/core/runtime/dex-format#mutf-8
+    """
+    m1 = bytes(b1)
+    if b"\xc0\x80" in m1:
+        m1 = m1.replace(b"\xc0\x80", b"\x00")
+
+    m2 = bytes(b2)
+    if b"\xc0\x80" in m2:
+        m2 = m2.replace(b"\xc0\x80", b"\x00")
+
+    if m1 == m2:
+        return 0
+    return -1 if m1 < m2 else 1
 
 
 def utf16_code_units(s: str) -> int:

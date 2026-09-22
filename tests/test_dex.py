@@ -412,9 +412,16 @@ class TestDexFile(unittest.TestCase):
 
     def test_dereferencing_getters(self) -> None:
         """Verify dereferencing getters for string, type descriptor, and item structs."""
-        # get_string and get_string_id
+        # get_string, get_string_data, and get_string_id
         self.assertEqual(self.dex.get_string(Idx[StringIdItem](0)), "I")
         self.assertEqual(self.dex.get_string(Idx[StringIdItem](1)), "LTestClass;")
+
+        str_data0 = self.dex.get_string_data(Idx[StringIdItem](0))
+        self.assertIsInstance(str_data0, StringDataItem)
+        self.assertEqual(str_data0.decode(), "I")
+        self.assertEqual(bytes(str_data0.data), b"I")
+        self.assertEqual(str_data0.utf16_size, 1)
+
         self.assertEqual(self.dex.get_string_id(Idx[StringIdItem](0)), self.dex.string_ids[0])
 
         # get_type_descriptor and get_type_id

@@ -1,9 +1,15 @@
-"""Unit tests for MUTF-8 encoding and Cursor MUTF-8 decoding."""
+"""Unit tests for MUTF-8 encoding, decoding, and Cursor MUTF-8 operations."""
 
 import unittest
 
 from dexbuf.cursor import Cursor
-from dexbuf.mutf8 import encode_mutf8, utf16_code_units
+from dexbuf.mutf8 import (
+    count_mutf8_utf16_units,
+    decode_mutf8,
+    decode_mutf8_utf16_units,
+    encode_mutf8,
+    utf16_code_units,
+)
 
 
 class TestMUTF8(unittest.TestCase):
@@ -45,6 +51,43 @@ class TestMUTF8(unittest.TestCase):
         """Test MUTF-8 encoding preserves isolated surrogate code units."""
         encoded = encode_mutf8("\ud800", null_terminated=True)
         self.assertEqual(encoded, b"\xed\xa0\x80\x00")
+
+    def test_decode_mutf8_and_utf16_units(self) -> None:
+        """Test decode_mutf8, decode_mutf8_utf16_units, and count_mutf8_utf16_units."""
+        cases = [
+            ("Hello", b"Hello", (72, 101, 108, 108, 111)),
+            ("Café", b"Caf\xc3\xa9", (67, 97, 102, 0x00E9)),
+            ("a\x00b", b"a\xc0\x80b", (97, 0, 98)),
+            ("𐀀", b"\xed\xa0\x80\xed\xb0\x80", (0xD800, 0xDC00)),
+        ]
+
+        for s, raw, expected_units in cases:
+            self.assertEqual(decode_mutf8(raw), s)
+            self.assertEqual(decode_mutf8_utf16_units(raw), expected_units)
+            self.assertEqual(count_mutf8_utf16_units(raw), len(expected_units))
+
+    def test_cursor_read_mutf8_slice_size_hint(self) -> None:
+        """Test Cursor.read_mutf8_slice with O(1) size hint and non-ASCII skip scanning."""
+        # 1. ASCII with size_hint matching
+        buf1 = b"HelloWorld\x00Extra"
+        c1 = Cursor(buf1)
+        slice1 = c1.read_mutf8_slice(size_hint=10)
+        self.assertEqual(bytes(slice1), b"HelloWorld")
+        self.assertEqual(c1.tell(), 11)
+
+        # 2. Non-ASCII multi-byte string where size_hint skips start of scan
+        # "Café" -> MUTF-8 bytes: b"Caf\xc3\xa9\x00" (5 bytes data + 1 null; utf16_size = 4)
+        buf2 = b"Caf\xc3\xa9\x00Tail"
+        c2 = Cursor(buf2)
+        slice2 = c2.read_mutf8_slice(size_hint=4)
+        self.assertEqual(bytes(slice2), b"Caf\xc3\xa9")
+        self.assertEqual(c2.tell(), 6)
+
+        # 3. size_hint is None
+        c3 = Cursor(buf1)
+        slice3 = c3.read_mutf8_slice(size_hint=None)
+        self.assertEqual(bytes(slice3), b"HelloWorld")
+        self.assertEqual(c3.tell(), 11)
 
     def test_cursor_read_mutf8_ascii_fast_path(self) -> None:
         """Test Cursor.read_mutf8 ASCII fast-path when expected_utf16_size is provided."""

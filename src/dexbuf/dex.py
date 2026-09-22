@@ -159,7 +159,12 @@ class DexFile:
     def get_string(self, idx: Idx[StringIdItem]) -> str:
         """Resolve StringIdItem index to string data."""
         string_id = self.string_ids.get(idx)
-        return StringDataItem.from_buffer(self._buffer, string_id.string_data_off).data
+        return StringDataItem.from_buffer(self._buffer, string_id.string_data_off).decode()
+
+    def get_string_data(self, idx: Idx[StringIdItem]) -> StringDataItem:
+        """Resolve StringIdItem index to lazy StringDataItem."""
+        string_id = self.string_ids.get(idx)
+        return StringDataItem.from_buffer(self._buffer, string_id.string_data_off)
 
     def get_string_id(self, idx: Idx[StringIdItem]) -> StringIdItem:
         """Fetch StringIdItem by index."""

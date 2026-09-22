@@ -7,6 +7,8 @@ import struct
 from collections.abc import Buffer
 from typing import Any, Self
 
+from dexbuf.mutf8 import decode_mutf8
+
 __all__ = ["Cursor"]
 
 
@@ -214,6 +216,40 @@ class Cursor:
                 return result
         raise ValueError("Invalid SLEB128 sequence: exceeds 5 bytes")
 
+    def read_mutf8_slice(self, size_hint: int | None = None) -> memoryview:
+        """Scan to the terminating null byte 0x00 and return a zero-copy MUTF-8 slice.
+
+        Advances internal offset past the terminating null byte.
+        Uses size_hint (UTF-16 code unit size) for fast O(1) ASCII check and skip optimization.
+
+        See https://source.android.com/docs/core/runtime/dex-format#mutf-8
+        """
+        buf = self._buffer
+        buf_len = len(buf)
+        scan_start = self._offset
+
+        if size_hint is not None and size_hint >= 0:
+            hint_pos = self._offset + size_hint
+            if hint_pos < buf_len:
+                if buf[hint_pos] == 0:
+                    slice_mv = buf[self._offset : hint_pos]
+                    self._offset = hint_pos + 1
+                    return slice_mv
+                scan_start = hint_pos + 1
+
+        null_idx = -1
+        for i in range(scan_start, buf_len):
+            if buf[i] == 0:
+                null_idx = i
+                break
+
+        if null_idx == -1:
+            raise EOFError("Unterminated MUTF-8 string: reached EOF before null terminator")
+
+        slice_mv = buf[self._offset : null_idx]
+        self._offset = null_idx + 1
+        return slice_mv
+
     def read_mutf8(self, expected_utf16_size: int | None = None) -> str:
         """Read a null-terminated Modified UTF-8 (MUTF-8) string.
 
@@ -222,72 +258,5 @@ class Cursor:
 
         See https://source.android.com/docs/core/runtime/dex-format#mutf-8
         """
-        # ASCII fast-path
-        if expected_utf16_size is not None:
-            cand_len = expected_utf16_size
-            if cand_len >= 0 and self._offset + cand_len < len(self._buffer):
-                if self._buffer[self._offset + cand_len] == 0:
-                    cand_bytes = bytes(self._buffer[self._offset : self._offset + cand_len])
-                    if all(1 <= b <= 0x7F for b in cand_bytes):
-                        self._offset += cand_len + 1
-                        return cand_bytes.decode("ascii")
-
-        units: list[int] = []
-        buf = self._buffer
-        buf_len = len(buf)
-
-        while True:
-            if self._offset >= buf_len:
-                raise EOFError("Unterminated MUTF-8 string: reached EOF before null terminator")
-
-            b1 = buf[self._offset]
-            self._offset += 1
-
-            if b1 == 0:
-                # Null terminator
-                break
-
-            if (b1 & 0x80) == 0:
-                # 1-byte ASCII (0x01..0x7F)
-                units.append(b1)
-            elif (b1 & 0xE0) == 0xC0:
-                # 2-byte sequence
-                if self._offset >= buf_len:
-                    raise EOFError("Unterminated 2-byte MUTF-8 sequence at EOF")
-                b2 = buf[self._offset]
-                self._offset += 1
-                if (b2 & 0xC0) != 0x80:
-                    raise ValueError(
-                        f"Invalid MUTF-8 continuation byte 0x{b2:02x} at offset {self._offset - 1}"
-                    )
-                u = ((b1 & 0x1F) << 6) | (b2 & 0x3F)
-                units.append(u)
-            elif (b1 & 0xF0) == 0xE0:
-                # 3-byte sequence
-                if self._offset + 2 > buf_len:
-                    raise EOFError("Unterminated 3-byte MUTF-8 sequence at EOF")
-                b2 = buf[self._offset]
-                b3 = buf[self._offset + 1]
-                self._offset += 2
-                if (b2 & 0xC0) != 0x80 or (b3 & 0xC0) != 0x80:
-                    raise ValueError(
-                        f"Invalid MUTF-8 continuation bytes at offset {self._offset - 2}"
-                    )
-                u = ((b1 & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F)
-                units.append(u)
-            else:
-                raise ValueError(
-                    f"Invalid MUTF-8 start byte 0x{b1:02x} at offset {self._offset - 1}"
-                )
-
-        if expected_utf16_size is not None and len(units) != expected_utf16_size:
-            raise ValueError(
-                f"MUTF-8 string length mismatch: expected {expected_utf16_size} "
-                f"UTF-16 code units, got {len(units)}"
-            )
-
-        if not units:
-            return ""
-
-        raw_utf16 = struct.pack(f"<{len(units)}H", *units)
-        return raw_utf16.decode("utf-16le", errors="surrogatepass")
+        slice_mv = self.read_mutf8_slice(size_hint=expected_utf16_size)
+        return decode_mutf8(slice_mv, expected_utf16_size=expected_utf16_size)

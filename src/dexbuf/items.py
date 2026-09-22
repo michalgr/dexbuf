@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, overload, runti
 from dexbuf.cursor import Cursor
 from dexbuf.debug import skip_debug_instruction
 from dexbuf.leb128 import encode_sleb128, encode_uleb128, encode_uleb128p1
-from dexbuf.mutf8 import encode_mutf8, utf16_code_units
+from dexbuf.mutf8 import decode_mutf8, decode_mutf8_utf16_units, encode_mutf8, utf16_code_units
 from dexbuf.types import NO_OFFSET, Count, Idx, Offset
 from dexbuf.value import EncodedAnnotation, EncodedArray
 
@@ -242,19 +242,43 @@ class StringDataItem:
 
     PADDING: ClassVar[int] = 1
 
-    data: str
+    data: memoryview
+    utf16_size: int
 
     @property
-    def utf16_size(self) -> int:
-        """UTF-16 code unit count of data string."""
-        return utf16_code_units(self.data)
+    def raw_bytes(self) -> bytes:
+        """Return raw MUTF-8 bytes excluding null terminator."""
+        return bytes(self.data)
+
+    def to_raw_bytes(self) -> bytes:
+        """Return raw MUTF-8 bytes excluding null terminator."""
+        return bytes(self.data)
+
+    def decode(self) -> str:
+        """Decode MUTF-8 bytes to a Python string."""
+        return decode_mutf8(self.data, expected_utf16_size=self.utf16_size)
+
+    def __str__(self) -> str:
+        return self.decode()
+
+    def to_utf16(self) -> tuple[int, ...]:
+        """Return sequence of 16-bit UTF-16 code units."""
+        return decode_mutf8_utf16_units(self.data, expected_utf16_size=self.utf16_size)
+
+    def utf16_code_units(self) -> tuple[int, ...]:
+        """Return sequence of 16-bit UTF-16 code units."""
+        return self.to_utf16()
+
+    def code_points(self) -> tuple[int, ...]:
+        """Return sequence of Unicode code points."""
+        return tuple(ord(c) for c in self.decode())
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse a StringDataItem from a Cursor."""
         utf16_size = cursor.read_uleb128()
-        data = cursor.read_mutf8(expected_utf16_size=utf16_size)
-        return cls(data=data)
+        data = cursor.read_mutf8_slice(size_hint=utf16_size)
+        return cls(data=data, utf16_size=utf16_size)
 
     @classmethod
     def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
@@ -264,11 +288,12 @@ class StringDataItem:
     @classmethod
     def from_str(cls, s: str) -> Self:
         """Construct a StringDataItem directly from a Python string."""
-        return cls(data=s)
+        encoded = encode_mutf8(s, null_terminated=False)
+        return cls(data=memoryview(encoded), utf16_size=utf16_code_units(s))
 
     def to_bytes(self) -> bytes:
         """Encode this StringDataItem to raw DEX bytes."""
-        return encode_uleb128(self.utf16_size) + encode_mutf8(self.data, null_terminated=True)
+        return encode_uleb128(self.utf16_size) + bytes(self.data) + b"\x00"
 
 
 @dataclass(slots=True, frozen=True)

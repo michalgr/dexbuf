@@ -15,15 +15,19 @@ class TestSanity(unittest.TestCase):
     def test_top_level_exports(self) -> None:
         """Verify that top-level dexbuf module exports only public API items."""
         expected_all = [
+            "CLASS_FLAGS_MASK",
             "DEX_FILE_MAGIC",
             "ENDIAN_CONSTANT",
+            "FIELD_FLAGS_MASK",
             "HEADER_SIZE_V40",
             "HEADER_SIZE_V41",
             "IOP",
+            "METHOD_FLAGS_MASK",
             "NO_INDEX",
             "NO_OFFSET",
             "REVERSE_ENDIAN_CONSTANT",
             "SUPPORTED_DEX_VERSIONS",
+            "AccessFlags",
             "AnnotationElement",
             "AnnotationItem",
             "AnnotationOffItem",
@@ -87,6 +91,9 @@ class TestSanity(unittest.TestCase):
             "ValueType",
             "ZipArchive",
             "__version__",
+            "format_class_flags",
+            "format_field_flags",
+            "format_method_flags",
         ]
         self.assertEqual(dexbuf.__all__, expected_all)
 

@@ -10,6 +10,15 @@ from dexbuf.debug import (
     DebugPosition,
 )
 from dexbuf.dex import DexFile
+from dexbuf.flags import (
+    CLASS_FLAGS_MASK,
+    FIELD_FLAGS_MASK,
+    METHOD_FLAGS_MASK,
+    AccessFlags,
+    format_class_flags,
+    format_field_flags,
+    format_method_flags,
+)
 from dexbuf.instructions import IOP, Instruction, Opcode, Payload
 from dexbuf.items import (
     DEX_FILE_MAGIC,
@@ -86,15 +95,19 @@ from dexbuf.zip import (
 __version__ = "0.1.0.dev0"
 
 __all__ = [
+    "CLASS_FLAGS_MASK",
     "DEX_FILE_MAGIC",
     "ENDIAN_CONSTANT",
+    "FIELD_FLAGS_MASK",
     "HEADER_SIZE_V40",
     "HEADER_SIZE_V41",
     "IOP",
+    "METHOD_FLAGS_MASK",
     "NO_INDEX",
     "NO_OFFSET",
     "REVERSE_ENDIAN_CONSTANT",
     "SUPPORTED_DEX_VERSIONS",
+    "AccessFlags",
     "AnnotationElement",
     "AnnotationItem",
     "AnnotationOffItem",
@@ -158,4 +171,7 @@ __all__ = [
     "ValueType",
     "ZipArchive",
     "__version__",
+    "format_class_flags",
+    "format_field_flags",
+    "format_method_flags",
 ]

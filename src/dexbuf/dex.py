@@ -140,6 +140,7 @@ class DexFile:
             self.header.class_defs_size,
             ClassDefItem,
         )
+        self._class_defs_by_type: dict[Idx[TypeIdItem], ClassDefItem] | None = None
 
     @property
     def map_list(self) -> MapList:
@@ -221,6 +222,50 @@ class DexFile:
         if offset == NO_OFFSET or offset == 0:
             raise ValueError(f"Invalid static_values offset: {offset}")
         return EncodedArrayItem.from_buffer(self._buffer, offset).value
+
+    def find_string_id(self, s: str) -> Idx[StringIdItem] | None:
+        """Find StringIdItem index by string content using binary search."""
+        low = 0
+        high = len(self.string_ids) - 1
+        while low <= high:
+            mid = (low + high) // 2
+            candidate = self.get_string(Idx[StringIdItem](mid))
+            if candidate == s:
+                return Idx[StringIdItem](mid)
+            if candidate < s:
+                low = mid + 1
+            else:
+                high = mid - 1
+        return None
+
+    def find_type_id(self, descriptor: str) -> Idx[TypeIdItem] | None:
+        """Find TypeIdItem index by type descriptor using binary search."""
+        low = 0
+        high = len(self.type_ids) - 1
+        while low <= high:
+            mid = (low + high) // 2
+            candidate = self.get_type_descriptor(Idx[TypeIdItem](mid))
+            if candidate == descriptor:
+                return Idx[TypeIdItem](mid)
+            if candidate < descriptor:
+                low = mid + 1
+            else:
+                high = mid - 1
+        return None
+
+    def find_class_def(self, target: Idx[TypeIdItem] | str) -> ClassDefItem | None:
+        """Find ClassDefItem by type descriptor string or TypeIdItem index."""
+        if isinstance(target, str):
+            type_idx = self.find_type_id(target)
+            if type_idx is None:
+                return None
+        else:
+            type_idx = target
+
+        if self._class_defs_by_type is None:
+            self._class_defs_by_type = {cd.class_idx: cd for cd in self.class_defs}
+
+        return self._class_defs_by_type.get(type_idx)
 
     @classmethod
     def open(cls, path: str | os.PathLike[str]) -> Self:

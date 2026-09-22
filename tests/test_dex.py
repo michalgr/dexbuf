@@ -605,6 +605,135 @@ class TestDexFile(unittest.TestCase):
             self.assertTrue(opened_dex.verify_signature())
             self.assertEqual(opened_dex.get_string(Idx[StringIdItem](0)), "Ljava/lang/Object;")
 
+    def test_find_string_id_sorted(self) -> None:
+        """Verify find_string_id on strictly sorted strings table."""
+        sorted_strings = ["A", "B", "C", "D", "E"]
+        dex_buf = create_dex_with_strings_and_types(sorted_strings, sorted_strings)
+        dex = DexFile(dex_buf)
+
+        # First, middle, last
+        self.assertEqual(dex.find_string_id("A"), Idx[StringIdItem](0))
+        self.assertEqual(dex.find_string_id("C"), Idx[StringIdItem](2))
+        self.assertEqual(dex.find_string_id("E"), Idx[StringIdItem](4))
+
+        # Missing: before first, between, after last
+        self.assertIsNone(dex.find_string_id("@"))
+        self.assertIsNone(dex.find_string_id("BB"))
+        self.assertIsNone(dex.find_string_id("Z"))
+
+        # Empty string table
+        empty_dex = DexFile(create_dex_with_strings_and_types([], []))
+        self.assertIsNone(empty_dex.find_string_id("A"))
+
+    def test_find_type_id_sorted(self) -> None:
+        """Verify find_type_id on strictly sorted type_ids table."""
+        types = ["LA;", "LB;", "LC;", "LD;", "LE;"]
+        dex_buf = create_dex_with_strings_and_types(types, types)
+        dex = DexFile(dex_buf)
+
+        # First, middle, last
+        self.assertEqual(dex.find_type_id("LA;"), Idx[TypeIdItem](0))
+        self.assertEqual(dex.find_type_id("LC;"), Idx[TypeIdItem](2))
+        self.assertEqual(dex.find_type_id("LE;"), Idx[TypeIdItem](4))
+
+        # Missing: before first, between, after last
+        self.assertIsNone(dex.find_type_id("L@;"))
+        self.assertIsNone(dex.find_type_id("LBB;"))
+        self.assertIsNone(dex.find_type_id("LZ;"))
+
+        # Empty type table
+        empty_dex = DexFile(create_dex_with_strings_and_types([], []))
+        self.assertIsNone(empty_dex.find_type_id("LA;"))
+
+    def test_find_class_def(self) -> None:
+        """Verify find_class_def lookup by descriptor or Idx[TypeIdItem]."""
+        self.assertIsNone(self.dex._class_defs_by_type)
+
+        # Lookup by Idx[TypeIdItem]
+        class_def = self.dex.find_class_def(Idx[TypeIdItem](1))
+        self.assertIsNotNone(class_def)
+        self.assertEqual(class_def.class_idx, Idx[TypeIdItem](1))  # type: ignore[union-attr]
+        self.assertIsNotNone(self.dex._class_defs_by_type)
+
+        # Lookup by descriptor str
+        class_def_str = self.dex.find_class_def("LTestClass;")
+        self.assertEqual(class_def_str, class_def)
+
+        # Non-existent class def lookup
+        self.assertIsNone(self.dex.find_class_def(Idx[TypeIdItem](0)))
+        self.assertIsNone(self.dex.find_class_def("Ljava/lang/Object;"))
+        self.assertIsNone(self.dex.find_class_def("LNonExistent;"))
+
+
+def create_dex_with_strings_and_types(strings: list[str], types: list[str]) -> bytes:
+    """Helper to create minimal DEX file with specific sorted string and type tables."""
+    header_size = 0x70
+    string_data_bytes = bytearray()
+    string_data_offsets: list[int] = []
+
+    # Calculate data section start
+    data_start_off = header_size + 4 * len(strings) + 4 * len(types)
+    data_off = data_start_off
+
+    for s in strings:
+        item = StringDataItem.from_str(s)
+        string_data_offsets.append(data_off)
+        b = item.to_bytes()
+        string_data_bytes.extend(b)
+        data_off += len(b)
+
+    string_ids_bytes = b"".join(
+        StringIdItem(string_data_off=Offset[StringDataItem](off)).to_bytes()
+        for off in string_data_offsets
+    )
+
+    # For types, map type string to its index in strings
+    type_ids: list[TypeIdItem] = []
+    for t in types:
+        s_idx = strings.index(t)
+        type_ids.append(TypeIdItem(descriptor_idx=Idx[StringIdItem](s_idx)))
+
+    type_ids_bytes = b"".join(tid.to_bytes() for tid in type_ids)
+
+    total_file_size = data_off
+    header = HeaderItem(
+        magic=DEX_FILE_MAGIC,
+        checksum=0,
+        signature=b"\x00" * 20,
+        file_size=total_file_size,
+        header_size=header_size,
+        endian_tag=ENDIAN_CONSTANT,
+        link_size=0,
+        link_off=NO_OFFSET,
+        map_off=NO_OFFSET,
+        string_ids_size=Count[StringIdItem](len(strings)),
+        string_ids_off=Offset[StringIdItem](header_size if strings else 0),
+        type_ids_size=Count[TypeIdItem](len(types)),
+        type_ids_off=Offset[TypeIdItem]((header_size + len(string_ids_bytes)) if types else 0),
+        proto_ids_size=Count[ProtoIdItem](0),
+        proto_ids_off=NO_OFFSET,
+        field_ids_size=Count[FieldIdItem](0),
+        field_ids_off=NO_OFFSET,
+        method_ids_size=Count[MethodIdItem](0),
+        method_ids_off=NO_OFFSET,
+        class_defs_size=Count[ClassDefItem](0),
+        class_defs_off=NO_OFFSET,
+        data_size=total_file_size - data_start_off,
+        data_off=Offset[Any](data_start_off),
+    )
+
+    buf = bytearray(header.to_bytes())
+    buf.extend(string_ids_bytes)
+    buf.extend(type_ids_bytes)
+    buf.extend(string_data_bytes)
+
+    sig = hashlib.sha1(buf[32:]).digest()
+    buf[12:32] = sig
+    chk = zlib.adler32(buf[12:]) & 0xFFFF_FFFF
+    buf[8:12] = chk.to_bytes(4, "little")
+
+    return bytes(buf)
+
 
 if __name__ == "__main__":
     unittest.main()

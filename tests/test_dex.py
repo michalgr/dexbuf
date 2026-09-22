@@ -350,6 +350,64 @@ def create_sample_dex() -> bytes:
     return bytes(buf)
 
 
+def create_dex_with_strings(strings: list[str]) -> bytes:
+    """Construct a minimal DEX buffer containing a sorted list of strings."""
+    header_size = 0x70
+    string_data_bytes = bytearray()
+    string_data_offsets: list[int] = []
+
+    string_ids_off = header_size
+    string_ids_size = len(strings)
+
+    data_start_off = string_ids_off + 4 * string_ids_size
+    data_off = data_start_off
+
+    for s in strings:
+        item = StringDataItem.from_str(s)
+        string_data_offsets.append(data_off)
+        b = item.to_bytes()
+        string_data_bytes.extend(b)
+        data_off += len(b)
+
+    string_ids_bytes = b"".join(
+        StringIdItem(string_data_off=Offset[StringDataItem](off)).to_bytes()
+        for off in string_data_offsets
+    )
+
+    total_file_size = data_off
+
+    header = HeaderItem(
+        magic=DEX_FILE_MAGIC,
+        checksum=0,
+        signature=b"\x00" * 20,
+        file_size=total_file_size,
+        header_size=header_size,
+        endian_tag=ENDIAN_CONSTANT,
+        link_size=0,
+        link_off=NO_OFFSET,
+        map_off=NO_OFFSET,
+        string_ids_size=Count[StringIdItem](string_ids_size),
+        string_ids_off=Offset[StringIdItem](string_ids_off),
+        type_ids_size=Count[TypeIdItem](0),
+        type_ids_off=NO_OFFSET,
+        proto_ids_size=Count[ProtoIdItem](0),
+        proto_ids_off=NO_OFFSET,
+        field_ids_size=Count[FieldIdItem](0),
+        field_ids_off=NO_OFFSET,
+        method_ids_size=Count[MethodIdItem](0),
+        method_ids_off=NO_OFFSET,
+        class_defs_size=Count[ClassDefItem](0),
+        class_defs_off=NO_OFFSET,
+        data_size=total_file_size - data_start_off,
+        data_off=Offset[Any](data_start_off),
+    )
+
+    buf = bytearray(header.to_bytes())
+    buf.extend(string_ids_bytes)
+    buf.extend(string_data_bytes)
+    return bytes(buf)
+
+
 class TestDexFile(unittest.TestCase):
     def setUp(self) -> None:
         self.dex_bytes = create_sample_dex()
@@ -639,6 +697,46 @@ class TestDexFile(unittest.TestCase):
         self.assertEqual(len(empty_dex.string_ids), 0)
         self.assertIsNone(empty_dex.find_string_id("I"))
 
+    def test_find_string_id_astral_characters_utf16_order(self) -> None:
+        """Verify find_string_id handles UTF-16 code unit ordering for astral characters."""
+        # In DEX spec UTF-16 order: "\U00010000" (high surrogate 0xD800) < "\uFFFF" (0xFFFF).
+        # In Python standard string order: "\uFFFF" < "\U00010000" (65535 < 65536).
+        strings = ["\U00010000", "\uffff"]
+        dex = DexFile(create_dex_with_strings(strings))
+
+        self.assertEqual(dex.find_string_id("\U00010000"), Idx[StringIdItem](0))
+        self.assertEqual(dex.find_string_id("\uffff"), Idx[StringIdItem](1))
+        self.assertIsNone(dex.find_string_id("\u0000"))
+        self.assertIsNone(dex.find_string_id("\u8000"))
+        self.assertIsNone(dex.find_string_id("\U00010001"))
+
+    def test_find_string_id_ascii_and_non_ascii_fast_path(self) -> None:
+        """Verify find_string_id on pure ASCII, MUTF-8 multi-byte, and non-ASCII strings."""
+        strings = [
+            "",
+            "\x01",
+            "A",
+            "ABC",
+            "a",
+            "test",
+            "\u00e9",
+            "\u4f60\u5771",
+            "\U00010000",
+            "\uffff",
+        ]
+        dex = DexFile(create_dex_with_strings(strings))
+
+        for idx, s in enumerate(strings):
+            self.assertEqual(dex.find_string_id(s), Idx[StringIdItem](idx), f"Failed for {s!r}")
+
+        # Missing queries
+        self.assertIsNone(dex.find_string_id("AB"))
+        self.assertIsNone(dex.find_string_id("B"))
+        self.assertIsNone(dex.find_string_id("z"))
+        self.assertIsNone(dex.find_string_id("\u00e8"))
+        self.assertIsNone(dex.find_string_id("\u00ea"))
+        self.assertIsNone(dex.find_string_id("\U00010001"))
+
     def test_find_type_id(self) -> None:
         """Verify binary search lookup of existing and non-existent type descriptors."""
         # Existing type descriptors (first, middle, last)
@@ -647,7 +745,11 @@ class TestDexFile(unittest.TestCase):
         self.assertEqual(self.dex.find_type_id("Ljava/lang/Object;"), Idx[TypeIdItem](2))
         self.assertEqual(self.dex.find_type_id("V"), Idx[TypeIdItem](3))
 
-        # Non-existent type descriptors (before first, between elements, after last)
+        # Descriptor exists in string_ids but is NOT in type_ids
+        self.assertIsNone(self.dex.find_type_id("testField"))
+        self.assertIsNone(self.dex.find_type_id("testMethod"))
+
+        # Descriptor does NOT exist in string_ids
         self.assertIsNone(self.dex.find_type_id("A"))
         self.assertIsNone(self.dex.find_type_id("LNonExistent;"))
         self.assertIsNone(self.dex.find_type_id("Z"))

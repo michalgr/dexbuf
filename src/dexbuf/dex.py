@@ -27,6 +27,7 @@ from dexbuf.items import (
     TypeIdItem,
     TypeList,
 )
+from dexbuf.mutf8 import utf16_sort_key
 from dexbuf.types import NO_INDEX, NO_OFFSET, Count, Idx, Offset
 
 __all__ = ["DexFile", "TableSequence"]
@@ -174,15 +175,34 @@ class DexFile:
         """Find StringIdItem index by string value using binary search."""
         low = 0
         high = len(self.string_ids) - 1
+        is_ascii = s.isascii()
+        s_bytes = s.encode("ascii") if is_ascii else None
+        s_key = utf16_sort_key(s)
+
         while low <= high:
             mid = (low + high) // 2
-            candidate = self.get_string(Idx[StringIdItem](mid))
-            if candidate == s:
-                return Idx[StringIdItem](mid)
-            if candidate < s:
-                low = mid + 1
+            candidate_item = self.get_string_data(Idx[StringIdItem](mid))
+            if (
+                is_ascii
+                and s_bytes is not None
+                and candidate_item.utf16_size == len(candidate_item.data)
+            ):
+                cand_bytes = bytes(candidate_item.data)
+                if cand_bytes == s_bytes:
+                    return Idx[StringIdItem](mid)
+                if cand_bytes < s_bytes:
+                    low = mid + 1
+                else:
+                    high = mid - 1
             else:
-                high = mid - 1
+                cand_str = candidate_item.decode()
+                cand_key = utf16_sort_key(cand_str)
+                if cand_key == s_key:
+                    return Idx[StringIdItem](mid)
+                if cand_key < s_key:
+                    low = mid + 1
+                else:
+                    high = mid - 1
         return None
 
     def get_type_descriptor(self, idx: Idx[TypeIdItem]) -> str:
@@ -196,14 +216,18 @@ class DexFile:
 
     def find_type_id(self, descriptor: str) -> Idx[TypeIdItem] | None:
         """Find TypeIdItem index by type descriptor string using binary search."""
+        str_idx = self.find_string_id(descriptor)
+        if str_idx is None:
+            return None
+
         low = 0
         high = len(self.type_ids) - 1
         while low <= high:
             mid = (low + high) // 2
-            candidate = self.get_type_descriptor(Idx[TypeIdItem](mid))
-            if candidate == descriptor:
+            candidate_str_idx = self.type_ids[mid].descriptor_idx
+            if candidate_str_idx == str_idx:
                 return Idx[TypeIdItem](mid)
-            if candidate < descriptor:
+            if candidate_str_idx < str_idx:
                 low = mid + 1
             else:
                 high = mid - 1

@@ -12,7 +12,16 @@ __all__ = [
     "decode_mutf8_utf16_units",
     "encode_mutf8",
     "utf16_code_units",
+    "utf16_sort_key",
 ]
+
+
+def utf16_sort_key(s: str) -> bytes:
+    """Return UTF-16 code unit sort key for DEX specification string comparison.
+
+    See https://source.android.com/docs/core/runtime/dex-format#string-item
+    """
+    return s.encode("utf-16be", errors="surrogatepass")
 
 
 def utf16_code_units(s: str) -> int:

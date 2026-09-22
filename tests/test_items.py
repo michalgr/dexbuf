@@ -1085,6 +1085,112 @@ class TestClassDataItem(unittest.TestCase):
         from_buf = ClassDataItem.from_buffer(buf, Offset[ClassDataItem](6))
         self.assertEqual(from_buf, item)
 
+    def test_delta_decoding_iterators(self) -> None:
+        """Verify delta-decoding iterators on ClassDataItem."""
+        # 1. Empty tuples
+        empty_item = ClassDataItem(
+            static_fields=(),
+            instance_fields=(),
+            direct_methods=(),
+            virtual_methods=(),
+        )
+        self.assertEqual(list(empty_item.iter_static_fields()), [])
+        self.assertEqual(list(empty_item.iter_instance_fields()), [])
+        self.assertEqual(list(empty_item.iter_direct_methods()), [])
+        self.assertEqual(list(empty_item.iter_virtual_methods()), [])
+
+        # 2. Single-item tuples with non-zero diff
+        sf_single = EncodedField(field_idx_diff=15, access_flags=0x0001)
+        if_single = EncodedField(field_idx_diff=42, access_flags=0x0002)
+        dm_single = EncodedMethod(
+            method_idx_diff=100, access_flags=0x0008, code_off=Offset[CodeItem](0x1000)
+        )
+        vm_single = EncodedMethod(
+            method_idx_diff=200, access_flags=0x0001, code_off=Offset[CodeItem](0x2000)
+        )
+
+        single_item = ClassDataItem(
+            static_fields=(sf_single,),
+            instance_fields=(if_single,),
+            direct_methods=(dm_single,),
+            virtual_methods=(vm_single,),
+        )
+
+        self.assertEqual(
+            list(single_item.iter_static_fields()),
+            [(Idx[FieldIdItem](15), sf_single)],
+        )
+        self.assertEqual(
+            list(single_item.iter_instance_fields()),
+            [(Idx[FieldIdItem](42), if_single)],
+        )
+        self.assertEqual(
+            list(single_item.iter_direct_methods()),
+            [(Idx[MethodIdItem](100), dm_single)],
+        )
+        self.assertEqual(
+            list(single_item.iter_virtual_methods()),
+            [(Idx[MethodIdItem](200), vm_single)],
+        )
+
+        # 3. Multi-item tuples verifying correct cumulative calculations and reset across categories
+        sf1 = EncodedField(field_idx_diff=10, access_flags=1)
+        sf2 = EncodedField(field_idx_diff=5, access_flags=2)
+        sf3 = EncodedField(field_idx_diff=0, access_flags=3)
+
+        if1 = EncodedField(field_idx_diff=3, access_flags=1)
+        if2 = EncodedField(field_idx_diff=7, access_flags=2)
+
+        dm1 = EncodedMethod(method_idx_diff=100, access_flags=1, code_off=NO_OFFSET)
+        dm2 = EncodedMethod(method_idx_diff=20, access_flags=2, code_off=NO_OFFSET)
+
+        vm1 = EncodedMethod(method_idx_diff=5, access_flags=1, code_off=NO_OFFSET)
+        vm2 = EncodedMethod(method_idx_diff=15, access_flags=2, code_off=NO_OFFSET)
+
+        multi_item = ClassDataItem(
+            static_fields=(sf1, sf2, sf3),
+            instance_fields=(if1, if2),
+            direct_methods=(dm1, dm2),
+            virtual_methods=(vm1, vm2),
+        )
+
+        # Static fields accum: 10, 10+5=15, 15+0=15
+        self.assertEqual(
+            list(multi_item.iter_static_fields()),
+            [
+                (Idx[FieldIdItem](10), sf1),
+                (Idx[FieldIdItem](15), sf2),
+                (Idx[FieldIdItem](15), sf3),
+            ],
+        )
+
+        # Instance fields accum: resets to 0 -> 3, 3+7=10
+        self.assertEqual(
+            list(multi_item.iter_instance_fields()),
+            [
+                (Idx[FieldIdItem](3), if1),
+                (Idx[FieldIdItem](10), if2),
+            ],
+        )
+
+        # Direct methods accum: 100, 100+20=120
+        self.assertEqual(
+            list(multi_item.iter_direct_methods()),
+            [
+                (Idx[MethodIdItem](100), dm1),
+                (Idx[MethodIdItem](120), dm2),
+            ],
+        )
+
+        # Virtual methods accum: resets to 0 -> 5, 5+15=20
+        self.assertEqual(
+            list(multi_item.iter_virtual_methods()),
+            [
+                (Idx[MethodIdItem](5), vm1),
+                (Idx[MethodIdItem](20), vm2),
+            ],
+        )
+
 
 class TestDebugInfoItem(unittest.TestCase):
     def test_padding_and_fields(self) -> None:

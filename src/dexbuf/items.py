@@ -937,6 +937,34 @@ class ClassDataItem:
             + b"".join(m.to_bytes() for m in self.virtual_methods)
         )
 
+    def iter_static_fields(self) -> Iterator[tuple[Idx[FieldIdItem], EncodedField]]:
+        """Yield (absolute_field_idx, EncodedField) pairs for static fields."""
+        current_idx = 0
+        for field in self.static_fields:
+            current_idx += field.field_idx_diff
+            yield Idx[FieldIdItem](current_idx), field
+
+    def iter_instance_fields(self) -> Iterator[tuple[Idx[FieldIdItem], EncodedField]]:
+        """Yield (absolute_field_idx, EncodedField) pairs for instance fields."""
+        current_idx = 0
+        for field in self.instance_fields:
+            current_idx += field.field_idx_diff
+            yield Idx[FieldIdItem](current_idx), field
+
+    def iter_direct_methods(self) -> Iterator[tuple[Idx[MethodIdItem], EncodedMethod]]:
+        """Yield (absolute_method_idx, EncodedMethod) pairs for direct methods."""
+        current_idx = 0
+        for method in self.direct_methods:
+            current_idx += method.method_idx_diff
+            yield Idx[MethodIdItem](current_idx), method
+
+    def iter_virtual_methods(self) -> Iterator[tuple[Idx[MethodIdItem], EncodedMethod]]:
+        """Yield (absolute_method_idx, EncodedMethod) pairs for virtual methods."""
+        current_idx = 0
+        for method in self.virtual_methods:
+            current_idx += method.method_idx_diff
+            yield Idx[MethodIdItem](current_idx), method
+
 
 class HiddenapiRestrictionFlag(IntEnum):
     """Hidden API restriction flags introduced in Android 10 (DEX 039).

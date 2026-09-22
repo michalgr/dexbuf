@@ -23,6 +23,7 @@ from dexbuf.types import ArgumentCount, BranchOffset, Hat, Idx, Literal, Reg
 
 __all__ = [
     "Format3rc",
+    "Format4rcc",
     "Format10t",
     "Format10x",
     "Format11n",
@@ -45,6 +46,7 @@ __all__ = [
     "Format31t",
     "Format32x",
     "Format35c",
+    "Format45cc",
     "Format51l",
     "Instruction",
     "RefItem",
@@ -526,6 +528,67 @@ class Format3rc[RefT: RefItem](Instruction):
 
     def to_bytes(self) -> bytes:
         return self.STRUCT.pack(self.OPCODE, int(self.a), int(self.b), int(self.c))
+
+
+@dataclass(slots=True, frozen=True)
+class Format45cc[RefT: RefItem](Instruction):
+    """Format 45cc: op {vC, vD, vE, vF, vG}, meth@BBBB, proto@HHHH.
+
+    Operands: 0..5 reg operands, 16-bit ref index, 16-bit proto ref index.
+    """
+
+    STRUCT: ClassVar[struct.Struct] = struct.Struct("<BBHBBH")
+
+    a: ArgumentCount
+    b: Idx[RefT]
+    c: Reg
+    d: Reg
+    e: Reg
+    f: Reg
+    g: Reg
+    proto: Idx[ProtoIdItem]
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        _, ag, bbbb, dc, fe, hhhh = cursor.unpack(cls.STRUCT)
+        a = ArgumentCount((ag >> 4) & 0x0F)
+        g = Reg(ag & 0x0F)
+        b = Idx[RefT](bbbb)
+        c = Reg(dc & 0x0F)
+        d = Reg((dc >> 4) & 0x0F)
+        e = Reg(fe & 0x0F)
+        f = Reg((fe >> 4) & 0x0F)
+        proto = Idx[ProtoIdItem](hhhh)
+        return cls(a=a, b=b, c=c, d=d, e=e, f=f, g=g, proto=proto)
+
+    def to_bytes(self) -> bytes:
+        ag = ((int(self.a) & 0x0F) << 4) | (int(self.g) & 0x0F)
+        dc = ((int(self.d) & 0x0F) << 4) | (int(self.c) & 0x0F)
+        fe = ((int(self.f) & 0x0F) << 4) | (int(self.e) & 0x0F)
+        return self.STRUCT.pack(self.OPCODE, ag, int(self.b), dc, fe, int(self.proto))
+
+
+@dataclass(slots=True, frozen=True)
+class Format4rcc[RefT: RefItem](Instruction):
+    """Format 4rcc: op {vCCCC .. vNNNN}, meth@BBBB, proto@HHHH.
+
+    Operands: reg range count A, 16-bit ref index B, start reg C, 16-bit proto ref index.
+    """
+
+    STRUCT: ClassVar[struct.Struct] = struct.Struct("<BBHHH")
+
+    a: ArgumentCount
+    b: Idx[RefT]
+    c: Reg
+    proto: Idx[ProtoIdItem]
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        _, a, b, c, proto = cursor.unpack(cls.STRUCT)
+        return cls(a=ArgumentCount(a), b=Idx[RefT](b), c=Reg(c), proto=Idx[ProtoIdItem](proto))
+
+    def to_bytes(self) -> bytes:
+        return self.STRUCT.pack(self.OPCODE, int(self.a), int(self.b), int(self.c), int(self.proto))
 
 
 @dataclass(slots=True, frozen=True)

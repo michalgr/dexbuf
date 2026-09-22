@@ -18,6 +18,8 @@ from dexbuf.instructions.definitions import (
     IfEq,
     IfEqz,
     Iget,
+    InvokePolymorphic,
+    InvokePolymorphicRange,
     InvokeVirtual,
     InvokeVirtualRange,
     Move,
@@ -26,6 +28,7 @@ from dexbuf.instructions.definitions import (
     Nop,
     Return,
 )
+from dexbuf.instructions.formats import Format4rcc, Format45cc
 from dexbuf.items import FieldIdItem, StringIdItem
 from dexbuf.types import ArgumentCount, BranchOffset, Hat, Idx, Literal, Reg
 
@@ -248,6 +251,50 @@ class TestInstructionFormats(unittest.TestCase):
         parsed = ConstWide.from_cursor(Cursor(raw))
         self.assertEqual(parsed.a, 8)
         self.assertEqual(parsed.b, -0x1234_5678_9ABC_DEF0)
+        self.assertEqual(parsed, inst)
+
+    def test_format45cc(self) -> None:
+        inst = InvokePolymorphic(
+            a=ArgumentCount(3),
+            b=Idx(0x1234),
+            c=Reg(1),
+            d=Reg(2),
+            e=Reg(3),
+            f=Reg(0),
+            g=Reg(0),
+            proto=Idx(0x5678),
+        )
+        self.assertIsInstance(inst, Format45cc)
+        self.assertEqual(inst.code_units, 4)
+        raw = inst.to_bytes()
+        self.assertEqual(len(raw), 8)
+        parsed = InvokePolymorphic.from_cursor(Cursor(raw))
+        self.assertEqual(parsed.a, 3)
+        self.assertEqual(parsed.b, 0x1234)
+        self.assertEqual(parsed.c, 1)
+        self.assertEqual(parsed.d, 2)
+        self.assertEqual(parsed.e, 3)
+        self.assertEqual(parsed.f, 0)
+        self.assertEqual(parsed.g, 0)
+        self.assertEqual(parsed.proto, 0x5678)
+        self.assertEqual(parsed, inst)
+
+    def test_format4rcc(self) -> None:
+        inst = InvokePolymorphicRange(
+            a=ArgumentCount(8),
+            b=Idx(0x1234),
+            c=Reg(4),
+            proto=Idx(0x5678),
+        )
+        self.assertIsInstance(inst, Format4rcc)
+        self.assertEqual(inst.code_units, 4)
+        raw = inst.to_bytes()
+        self.assertEqual(len(raw), 8)
+        parsed = InvokePolymorphicRange.from_cursor(Cursor(raw))
+        self.assertEqual(parsed.a, 8)
+        self.assertEqual(parsed.b, 0x1234)
+        self.assertEqual(parsed.c, 4)
+        self.assertEqual(parsed.proto, 0x5678)
         self.assertEqual(parsed, inst)
 
 

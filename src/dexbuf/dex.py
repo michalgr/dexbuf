@@ -27,6 +27,7 @@ from dexbuf.items import (
     TypeIdItem,
     TypeList,
 )
+from dexbuf.mutf8 import encode_mutf8
 from dexbuf.types import NO_INDEX, NO_OFFSET, Count, Idx, Offset
 
 __all__ = ["DexFile", "TableSequence"]
@@ -172,14 +173,22 @@ class DexFile:
 
     def find_string_id(self, s: str) -> Idx[StringIdItem] | None:
         """Find StringIdItem index by string value using binary search."""
+        target_bytes = encode_mutf8(s, null_terminated=False)
+        if 0xC0 in target_bytes:
+            target_bytes = target_bytes.replace(b"\xc0\x80", b"\x00")
+
         low = 0
         high = len(self.string_ids) - 1
         while low <= high:
             mid = (low + high) // 2
-            candidate = self.get_string(Idx[StringIdItem](mid))
-            if candidate == s:
+            cand_data = self.get_string_data(Idx[StringIdItem](mid)).data
+            cand_bytes = bytes(cand_data)
+            if 0xC0 in cand_bytes:
+                cand_bytes = cand_bytes.replace(b"\xc0\x80", b"\x00")
+
+            if cand_bytes == target_bytes:
                 return Idx[StringIdItem](mid)
-            if candidate < s:
+            if cand_bytes < target_bytes:
                 low = mid + 1
             else:
                 high = mid - 1
@@ -196,14 +205,18 @@ class DexFile:
 
     def find_type_id(self, descriptor: str) -> Idx[TypeIdItem] | None:
         """Find TypeIdItem index by type descriptor string using binary search."""
+        string_idx = self.find_string_id(descriptor)
+        if string_idx is None:
+            return None
+
         low = 0
         high = len(self.type_ids) - 1
         while low <= high:
             mid = (low + high) // 2
-            candidate = self.get_type_descriptor(Idx[TypeIdItem](mid))
-            if candidate == descriptor:
+            type_id = self.get_type_id(Idx[TypeIdItem](mid))
+            if type_id.descriptor_idx == string_idx:
                 return Idx[TypeIdItem](mid)
-            if candidate < descriptor:
+            if type_id.descriptor_idx < string_idx:
                 low = mid + 1
             else:
                 high = mid - 1

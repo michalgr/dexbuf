@@ -350,6 +350,85 @@ def create_sample_dex() -> bytes:
     return bytes(buf)
 
 
+def create_utf16_ordering_dex() -> bytes:
+    """Construct a DEX buffer with string_ids sorted strictly in UTF-16 code unit order."""
+    header_size = 0x70
+    strings = [
+        "\x00",
+        "A",
+        "L\U00010000;",
+        "L\ue000;",
+        "\U00010000",
+        "\ue000",
+        "\uffff",
+    ]
+    string_data_bytes = bytearray()
+    string_data_offsets: list[int] = []
+
+    type_ids = [
+        TypeIdItem(descriptor_idx=Idx[StringIdItem](2)),  # L\U00010000;
+        TypeIdItem(descriptor_idx=Idx[StringIdItem](3)),  # L\uE000;
+    ]
+    type_ids_bytes = b"".join(t.to_bytes() for t in type_ids)
+
+    data_start_off = header_size + 4 * len(strings) + len(type_ids_bytes)
+    data_off = data_start_off
+
+    for s in strings:
+        item = StringDataItem.from_str(s)
+        string_data_offsets.append(data_off)
+        b = item.to_bytes()
+        string_data_bytes.extend(b)
+        data_off += len(b)
+
+    string_ids_off = header_size
+    string_ids_bytes = b"".join(
+        StringIdItem(string_data_off=Offset[StringDataItem](off)).to_bytes()
+        for off in string_data_offsets
+    )
+
+    type_ids_off = string_ids_off + len(string_ids_bytes)
+    total_file_size = data_off
+
+    header = HeaderItem(
+        magic=DEX_FILE_MAGIC,
+        checksum=0,
+        signature=b"\x00" * 20,
+        file_size=total_file_size,
+        header_size=header_size,
+        endian_tag=ENDIAN_CONSTANT,
+        link_size=0,
+        link_off=NO_OFFSET,
+        map_off=NO_OFFSET,
+        string_ids_size=Count[StringIdItem](len(strings)),
+        string_ids_off=Offset[StringIdItem](string_ids_off),
+        type_ids_size=Count[TypeIdItem](len(type_ids)),
+        type_ids_off=Offset[TypeIdItem](type_ids_off),
+        proto_ids_size=Count[ProtoIdItem](0),
+        proto_ids_off=NO_OFFSET,
+        field_ids_size=Count[FieldIdItem](0),
+        field_ids_off=NO_OFFSET,
+        method_ids_size=Count[MethodIdItem](0),
+        method_ids_off=NO_OFFSET,
+        class_defs_size=Count[ClassDefItem](0),
+        class_defs_off=NO_OFFSET,
+        data_size=total_file_size - data_start_off,
+        data_off=Offset[Any](data_start_off),
+    )
+
+    buf = bytearray(header.to_bytes())
+    buf.extend(string_ids_bytes)
+    buf.extend(type_ids_bytes)
+    buf.extend(string_data_bytes)
+
+    sig = hashlib.sha1(buf[32:]).digest()
+    buf[12:32] = sig
+    chk = zlib.adler32(buf[12:]) & 0xFFFF_FFFF
+    buf[8:12] = chk.to_bytes(4, "little")
+
+    return bytes(buf)
+
+
 class TestDexFile(unittest.TestCase):
     def setUp(self) -> None:
         self.dex_bytes = create_sample_dex()
@@ -611,6 +690,28 @@ class TestDexFile(unittest.TestCase):
             self.assertTrue(opened_dex.verify_checksum())
             self.assertTrue(opened_dex.verify_signature())
             self.assertEqual(opened_dex.get_string(Idx[StringIdItem](0)), "I")
+
+    def test_utf16_ordering_find_string_and_type_id(self) -> None:
+        """Verify find_string_id and find_type_id on tables with UTF-16 code unit ordering."""
+        dex = DexFile(create_utf16_ordering_dex())
+
+        # Verify string lookups
+        self.assertEqual(dex.find_string_id("\x00"), Idx[StringIdItem](0))
+        self.assertEqual(dex.find_string_id("A"), Idx[StringIdItem](1))
+        self.assertEqual(dex.find_string_id("L\U00010000;"), Idx[StringIdItem](2))
+        self.assertEqual(dex.find_string_id("L\ue000;"), Idx[StringIdItem](3))
+        self.assertEqual(dex.find_string_id("\U00010000"), Idx[StringIdItem](4))
+        self.assertEqual(dex.find_string_id("\ue000"), Idx[StringIdItem](5))
+        self.assertEqual(dex.find_string_id("\uffff"), Idx[StringIdItem](6))
+
+        # Verify non-existent string lookups
+        self.assertIsNone(dex.find_string_id("B"))
+        self.assertIsNone(dex.find_string_id("\ue001"))
+
+        # Verify type descriptor lookups
+        self.assertEqual(dex.find_type_id("L\U00010000;"), Idx[TypeIdItem](0))
+        self.assertEqual(dex.find_type_id("L\ue000;"), Idx[TypeIdItem](1))
+        self.assertIsNone(dex.find_type_id("LNonExistent;"))
 
     def test_find_string_id(self) -> None:
         """Verify binary search lookup of existing and non-existent strings."""

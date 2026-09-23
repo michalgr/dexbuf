@@ -7,12 +7,31 @@ import struct
 from collections.abc import Buffer
 
 __all__ = [
+    "compare_mutf8",
     "count_mutf8_utf16_units",
     "decode_mutf8",
     "decode_mutf8_utf16_units",
     "encode_mutf8",
     "utf16_code_units",
 ]
+
+
+def compare_mutf8(b1: Buffer, b2: Buffer) -> int:
+    """Compare two MUTF-8 byte buffers in UTF-16 code unit order.
+
+    See https://source.android.com/docs/core/runtime/dex-format#mutf-8
+    """
+    mv1 = bytes(b1)
+    mv2 = bytes(b2)
+    if 0xC0 in mv1:
+        mv1 = mv1.replace(b"\xc0\x80", b"\x00")
+    if 0xC0 in mv2:
+        mv2 = mv2.replace(b"\xc0\x80", b"\x00")
+    if mv1 < mv2:
+        return -1
+    if mv1 > mv2:
+        return 1
+    return 0
 
 
 def utf16_code_units(s: str) -> int:

@@ -186,9 +186,16 @@ class Cursor:
 
         See https://source.android.com/docs/core/runtime/dex-format#leb128
         """
-        result = 0
-        shift = 0
-        for _ in range(5):
+        if self._offset >= len(self._buffer):
+            raise EOFError("Unexpected EOF while reading ULEB128")
+        b = self._buffer[self._offset]
+        self._offset += 1
+        if not (b & 0x80):
+            return b
+
+        result = b & 0x7F
+        shift = 7
+        for _ in range(4):
             if self._offset >= len(self._buffer):
                 raise EOFError("Unexpected EOF while reading ULEB128")
             b = self._buffer[self._offset]

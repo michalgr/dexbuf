@@ -4,6 +4,7 @@ import unittest
 
 from dexbuf.cursor import Cursor
 from dexbuf.mutf8 import (
+    compare_mutf8,
     count_mutf8_utf16_units,
     decode_mutf8,
     decode_mutf8_utf16_units,
@@ -13,6 +14,34 @@ from dexbuf.mutf8 import (
 
 
 class TestMUTF8(unittest.TestCase):
+    def test_compare_mutf8(self) -> None:
+        """Test compare_mutf8 across boundary cases for nulls and supplementary chars."""
+        # 1. U+0000 vs ASCII 0x01
+        null_mutf8 = encode_mutf8("\x00", null_terminated=False)  # b"\xc0\x80"
+        ascii1_mutf8 = encode_mutf8("\x01", null_terminated=False)  # b"\x01"
+        self.assertLess(compare_mutf8(null_mutf8, ascii1_mutf8), 0)
+        self.assertGreater(compare_mutf8(ascii1_mutf8, null_mutf8), 0)
+
+        # 2. Supplementary character U+10000 (\U00010000) vs High BMP character U+E000 (\uE000)
+        # In Python str comparison: "\U00010000" > "\uE000" (0x10000 > 0xE000).
+        # In UTF-16 code units: 0xD800 (high surrogate) < 0xE000, so "\U00010000" < "\uE000".
+        supp_mutf8 = encode_mutf8("\U00010000", null_terminated=False)
+        high_bmp_mutf8 = encode_mutf8("\ue000", null_terminated=False)
+        self.assertLess(compare_mutf8(supp_mutf8, high_bmp_mutf8), 0)
+        self.assertGreater(compare_mutf8(high_bmp_mutf8, supp_mutf8), 0)
+
+        # 3. U+E000 vs U+FFFF
+        max_bmp_mutf8 = encode_mutf8("\uffff", null_terminated=False)
+        self.assertLess(compare_mutf8(high_bmp_mutf8, max_bmp_mutf8), 0)
+
+        # 4. Equality
+        self.assertEqual(compare_mutf8(supp_mutf8, supp_mutf8), 0)
+        self.assertEqual(compare_mutf8(b"", b""), 0)
+
+        # 5. Length / prefix boundary
+        self.assertLess(compare_mutf8(b"hello", b"helloworld"), 0)
+        self.assertGreater(compare_mutf8(b"helloworld", b"hello"), 0)
+
     def test_utf16_code_units(self) -> None:
         """Test counting UTF-16 code units for various string compositions."""
         self.assertEqual(utf16_code_units("Hello"), 5)

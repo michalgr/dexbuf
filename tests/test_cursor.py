@@ -222,6 +222,38 @@ class TestCursor(unittest.TestCase):
         with self.assertRaises(EOFError):
             c.peek_u16()
 
+    def test_read_uleb128(self) -> None:
+        """Test read_uleb128 fast-path and multi-byte parsing, truncated buffer, and overflow."""
+        # Single-byte values (0..127)
+        c1 = Cursor(b"\x00\x01\x7f")
+        self.assertEqual(c1.read_uleb128(), 0)
+        self.assertEqual(c1.read_uleb128(), 1)
+        self.assertEqual(c1.read_uleb128(), 127)
+        self.assertTrue(c1.is_eof)
+
+        # Multi-byte values (e.g. 128, 16256, 16384, 0xFFFFFFFF)
+        c2 = Cursor(b"\x80\x01\x80\x7f\x80\x80\x01\xff\xff\xff\xff\x0f")
+        self.assertEqual(c2.read_uleb128(), 128)
+        self.assertEqual(c2.read_uleb128(), 16256)
+        self.assertEqual(c2.read_uleb128(), 16384)
+        self.assertEqual(c2.read_uleb128(), 0xFFFFFFFF)
+        self.assertTrue(c2.is_eof)
+
+        # Truncated buffer (EOFError)
+        c3 = Cursor(b"\x80")
+        with self.assertRaises(EOFError):
+            c3.read_uleb128()
+
+        c4 = Cursor(b"")
+        with self.assertRaises(EOFError):
+            c4.read_uleb128()
+
+        # > 5 byte overflow (ValueError)
+        c5 = Cursor(b"\x80\x80\x80\x80\x80\x01")
+        with self.assertRaises(ValueError) as ctx:
+            c5.read_uleb128()
+        self.assertIn("exceeds 5 bytes", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

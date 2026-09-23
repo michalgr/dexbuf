@@ -39,7 +39,9 @@ def utf16_code_units(s: str) -> int:
 
     See https://source.android.com/docs/core/runtime/dex-format#mutf-8
     """
-    return sum(2 if ord(ch) > 0xFFFF else 1 for ch in s)
+    if s.isascii():
+        return len(s)
+    return len(s.encode("utf-16le", errors="surrogatepass")) // 2
 
 
 def encode_mutf8(s: str, null_terminated: bool = True) -> bytes:
@@ -78,7 +80,8 @@ def encode_mutf8(s: str, null_terminated: bool = True) -> bytes:
 
 
 def _is_ascii_mutf8(buf: memoryview) -> bool:
-    return all(1 <= b <= 0x7F for b in buf)
+    b = bytes(buf)
+    return b.isascii() and b"\x00" not in b
 
 
 def _decode_mutf8_units_body(buf: memoryview, expected_utf16_size: int | None = None) -> list[int]:

@@ -85,6 +85,42 @@ class TestCursor(unittest.TestCase):
             c.unpack(s_single)
         self.assertIn("need 4 bytes; remaining: 2", str(ctx.exception))
 
+    def test_peeking_methods(self) -> None:
+        """Test peek_u8 and peek_u16 without advancing cursor offset."""
+        data = b"\x12\x34\x56\x78"
+        c = Cursor(data, offset=1)
+
+        # Offset 1: bytes are \x34, \x56, \x78
+        self.assertEqual(c.tell(), 1)
+        self.assertEqual(c.peek_u8(), 0x34)
+        self.assertEqual(c.tell(), 1)
+
+        self.assertEqual(c.peek_u8(offset=1), 0x56)
+        self.assertEqual(c.tell(), 1)
+
+        self.assertEqual(c.peek_u8(offset=2), 0x78)
+        self.assertEqual(c.tell(), 1)
+
+        # Little endian u16
+        self.assertEqual(c.peek_u16(), 0x5634)
+        self.assertEqual(c.tell(), 1)
+
+        self.assertEqual(c.peek_u16(offset=1), 0x7856)
+        self.assertEqual(c.tell(), 1)
+
+        # EOF error checks for peeking
+        with self.assertRaises(EOFError):
+            c.peek_u8(offset=3)
+
+        with self.assertRaises(EOFError):
+            c.peek_u16(offset=2)
+
+        with self.assertRaises(EOFError):
+            c.peek_u8(offset=-2)
+
+        with self.assertRaises(EOFError):
+            c.peek_u16(offset=-2)
+
     def test_numeric_reads(self) -> None:
         """Test unsigned and signed little-endian numeric reads."""
         # \xfe = 254 (-2 signed u8/i8)
@@ -179,6 +215,12 @@ class TestCursor(unittest.TestCase):
 
         with self.assertRaises(EOFError):
             c.read_slice(1)
+
+        with self.assertRaises(EOFError):
+            c.peek_u8()
+
+        with self.assertRaises(EOFError):
+            c.peek_u16()
 
 
 if __name__ == "__main__":

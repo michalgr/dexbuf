@@ -76,6 +76,20 @@ class Cursor:
 
     # --- Numeric reads (little-endian) ---
 
+    def peek_u8(self, offset: int = 0) -> int:
+        """Peek at an unsigned 8-bit integer at self._offset + offset without advancing offset."""
+        pos = self._offset + offset
+        if pos < 0 or pos + 1 > len(self._buffer):
+            raise EOFError("Unexpected EOF while peeking u8")
+        return self._buffer[pos]
+
+    def peek_u16(self, offset: int = 0) -> int:
+        """Peek at an unsigned 16-bit LE integer at self._offset + offset without advancing."""
+        pos = self._offset + offset
+        if pos < 0 or pos + 2 > len(self._buffer):
+            raise EOFError("Unexpected EOF while peeking u16")
+        return struct.unpack_from("<H", self._buffer, pos)[0]
+
     def read_u8(self) -> int:
         """Read an unsigned 8-bit integer."""
         if self._offset + 1 > len(self._buffer):

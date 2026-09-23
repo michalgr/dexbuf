@@ -941,7 +941,7 @@ class CodeItem:
             tries = TryTable(cursor.read_slice(tries_size * 8))
             handlers_start = cursor.offset
             skip_catch_handler_list(cursor)
-            handlers = CatchHandlerMap(cursor._buffer[handlers_start:cursor.offset])
+            handlers = CatchHandlerMap(cursor._buffer[handlers_start : cursor.offset])
         else:
             tries = ()
             handlers = None

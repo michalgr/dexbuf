@@ -586,9 +586,15 @@ class TestDexFile(unittest.TestCase):
             self.dex.get_static_values(NO_OFFSET)
 
     def test_integrity_validation(self) -> None:
-        """Verify verify_checksum and verify_signature on valid and corrupted DEX buffers."""
+        """Verify checksum and signature on valid, corrupted, and padded DEX buffers."""
         self.assertTrue(self.dex.verify_checksum())
         self.assertTrue(self.dex.verify_signature())
+
+        # Buffer with trailing padding bytes beyond header.file_size
+        padded_bytes = self.dex_bytes + b"\x00" * 64 + b"\xde\xad\xbe\xef" * 8
+        padded_dex = DexFile(padded_bytes)
+        self.assertTrue(padded_dex.verify_checksum())
+        self.assertTrue(padded_dex.verify_signature())
 
         # Corrupt byte in signature region
         corrupted = bytearray(self.dex_bytes)
@@ -605,6 +611,14 @@ class TestDexFile(unittest.TestCase):
 
         self.assertFalse(corrupt_dex2.verify_checksum())
         self.assertTrue(corrupt_dex2.verify_signature())
+
+        # Corrupt byte within file_size range on padded DEX buffer
+        corrupted_padded = bytearray(padded_bytes)
+        corrupted_padded[35] ^= 0xFF
+        corrupt_padded_dex = DexFile(corrupted_padded)
+
+        self.assertFalse(corrupt_padded_dex.verify_checksum())
+        self.assertFalse(corrupt_padded_dex.verify_signature())
 
     def test_buffer_protocol_support(self) -> None:
         """Verify DexFile works on bytes, bytearray, and memoryview objects."""

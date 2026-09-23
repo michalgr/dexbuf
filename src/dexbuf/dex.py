@@ -150,12 +150,16 @@ class DexFile:
         return self._map_list
 
     def verify_checksum(self) -> bool:
-        """Compute Adler-32 checksum from offset 12 to EOF and verify header."""
-        return (zlib.adler32(self._buffer[12:]) & 0xFFFF_FFFF) == self.header.checksum
+        """Compute Adler-32 checksum from offset 12 to header.file_size and verify header."""
+        return (
+            zlib.adler32(self._buffer[12 : self.header.file_size]) & 0xFFFF_FFFF
+        ) == self.header.checksum
 
     def verify_signature(self) -> bool:
-        """Compute SHA-1 hash from offset 32 to EOF and verify header signature."""
-        return hashlib.sha1(self._buffer[32:]).digest() == self.header.signature
+        """Compute SHA-1 hash from offset 32 to header.file_size and verify header signature."""
+        return (
+            hashlib.sha1(self._buffer[32 : self.header.file_size]).digest() == self.header.signature
+        )
 
     def get_string(self, idx: Idx[StringIdItem]) -> str:
         """Resolve StringIdItem index to string data."""

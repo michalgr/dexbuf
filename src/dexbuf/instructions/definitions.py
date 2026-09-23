@@ -1632,7 +1632,7 @@ OPCODE_MAP: Mapping[int, type[Instruction]] = {cls.OPCODE: cls for cls in _ALL_I
 
 def parse_instruction(cursor: Cursor) -> Instruction:
     """Parse a single Dalvik instruction from cursor based on its opcode byte."""
-    opcode_byte = cursor.subcursor().read_u8()
+    opcode_byte = cursor.peek_u8()
     cls = OPCODE_MAP.get(opcode_byte)
     if cls is None:
         raise ValueError(f"Unknown or unsupported opcode: 0x{opcode_byte:02x}")

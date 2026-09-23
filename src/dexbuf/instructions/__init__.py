@@ -25,7 +25,7 @@ type IOP = Instruction | Payload
 
 def parse_iop(cursor: Cursor) -> IOP:
     """Parse a Dalvik instruction or payload (IOP) from cursor."""
-    word0 = cursor.subcursor().read_u16()
+    word0 = cursor.peek_u16()
     if word0 == Opcode.PACKED_SWITCH_PAYLOAD:
         return PackedSwitchPayload.from_cursor(cursor)
     if word0 == Opcode.SPARSE_SWITCH_PAYLOAD:

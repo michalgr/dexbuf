@@ -342,6 +342,99 @@ class TestVdexFile(unittest.TestCase):
         self.assertEqual(vdex.checksums, ())
         self.assertEqual(vdex.number_of_dex_files, 1)
 
+    def test_trailing_alignment_padding_with_checksum_section(self) -> None:
+        """Verify iter_dex_data handles trailing zero padding with CHECKSUM section."""
+        dex1 = create_minimal_dex_bytes()
+        dex2 = create_minimal_dex_bytes()
+        checksum_data = struct.pack("<2I", 0x11111111, 0x22222222)
+
+        for pad_len in (1, 2, 3, 16):
+            dex_sec = bytearray(dex1)
+            while len(dex_sec) % 4 != 0:
+                dex_sec.append(0)
+            dex_sec.extend(dex2)
+            dex_sec.extend(b"\x00" * pad_len)
+
+            vdex = VdexFile(
+                create_test_vdex(
+                    [
+                        (VdexSectionKind.CHECKSUM, checksum_data),
+                        (VdexSectionKind.DEX_FILE, bytes(dex_sec)),
+                    ]
+                )
+            )
+
+            self.assertEqual(vdex.number_of_dex_files, 2)
+            parsed_data = list(vdex.iter_dex_data())
+            self.assertEqual(len(parsed_data), 2)
+            self.assertEqual(bytes(parsed_data[0]), dex1)
+            self.assertEqual(bytes(parsed_data[1]), dex2)
+            self.assertEqual(len(vdex.dex_files), 2)
+
+    def test_trailing_alignment_padding_without_checksum_section(self) -> None:
+        """Verify iter_dex_data stops at trailing zero padding without CHECKSUM section."""
+        dex = create_minimal_dex_bytes()
+        for pad_len in (1, 2, 3, 16):
+            dex_sec = dex + b"\x00" * pad_len
+            vdex = VdexFile(create_test_vdex([(VdexSectionKind.DEX_FILE, dex_sec)]))
+
+            self.assertEqual(vdex.number_of_dex_files, 1)
+            parsed_data = list(vdex.iter_dex_data())
+            self.assertEqual(len(parsed_data), 1)
+            self.assertEqual(bytes(parsed_data[0]), dex)
+
+    def test_genuinely_truncated_or_corrupt_dex_header_raises_value_error(self) -> None:
+        """Verify non-zero corrupt bytes or truncated headers still raise ValueError."""
+        dex = create_minimal_dex_bytes()
+        # Truncated header with non-zero trailing bytes (e.g. 10 non-zero bytes remaining)
+        bad_sec = dex + b"\x01" * 10
+        vdex = VdexFile(create_test_vdex([(VdexSectionKind.DEX_FILE, bad_sec)]))
+        with self.assertRaises(ValueError) as ctx:
+            list(vdex.iter_dex_data())
+        self.assertIn("Truncated DEX header", str(ctx.exception))
+
+        # Corrupt file_size field with non-zero header
+        corrupt_hdr = bytearray(b"\x01" * 36)
+        struct.pack_into("<I", corrupt_hdr, 32, 200)  # file_size = 200 > len(bad_sec)
+        vdex_corrupt = VdexFile(create_test_vdex([(VdexSectionKind.DEX_FILE, bytes(corrupt_hdr))]))
+        with self.assertRaises(ValueError) as ctx:
+            list(vdex_corrupt.iter_dex_data())
+        self.assertIn("Invalid DEX file size", str(ctx.exception))
+
+    def test_dex_files_property(self) -> None:
+        """Verify vdex.dex_files property returns tuple[DexFile, ...]."""
+        # Absent/empty DEX section -> empty tuple
+        vdex_empty = VdexFile(create_test_vdex([(VdexSectionKind.VERIFIER_DEPS, b"deps")]))
+        self.assertEqual(vdex_empty.dex_files, ())
+
+        # Present DEX section -> tuple of DexFiles
+        dex1 = create_minimal_dex_bytes()
+        vdex_has_dex = VdexFile(create_test_vdex([(VdexSectionKind.DEX_FILE, dex1)]))
+        dfs = vdex_has_dex.dex_files
+        self.assertIsInstance(dfs, tuple)
+        self.assertEqual(len(dfs), 1)
+        self.assertIsInstance(dfs[0], DexFile)
+        self.assertEqual(dfs[0].header.magic, DEX_FILE_MAGIC)
+
+    def test_get_dex_file_type_and_bounds_validation(self) -> None:
+        """Verify get_dex_file raises TypeError for non-int index and IndexError for OOB."""
+        dex = create_minimal_dex_bytes()
+        vdex = VdexFile(create_test_vdex([(VdexSectionKind.DEX_FILE, dex)]))
+
+        # TypeError for non-integers
+        with self.assertRaises(TypeError):
+            vdex.get_dex_file(cast(Any, "0"))
+        with self.assertRaises(TypeError):
+            vdex.get_dex_file(cast(Any, 1.5))
+        with self.assertRaises(TypeError):
+            vdex.get_dex_file(cast(Any, True))
+
+        # IndexError for out-of-bounds
+        with self.assertRaises(IndexError):
+            vdex.get_dex_file(1)
+        with self.assertRaises(IndexError):
+            vdex.get_dex_file(-2)
+
     def test_error_handling(self) -> None:
         """Verify exceptions for truncated headers, invalid magic/versions, and corrupt bounds."""
         # Buffer too small for header (<12 bytes)

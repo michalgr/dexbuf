@@ -985,6 +985,16 @@ class TestTryAndCatchHandlers(unittest.TestCase):
         self.assertEqual(c_skip2.tell(), c_parse2.tell())
 
     def test_encoded_catch_handler_list(self) -> None:
+        # Test empty buffer initialization raises ValueError
+        with self.assertRaises(ValueError):
+            EncodedCatchHandlerList(memoryview(b""))
+
+        # Test from_handlers with empty handlers sequence creates valid 1-byte wire structure
+        empty_handler_list = EncodedCatchHandlerList.from_handlers([])
+        self.assertEqual(empty_handler_list.size, 0)
+        self.assertEqual(len(empty_handler_list), 0)
+        self.assertEqual(bytes(empty_handler_list._buffer), b"\x00")
+
         h1 = EncodedCatchHandler(
             handlers=(EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](5), addr=0x50),),
             catch_all_addr=None,
@@ -998,7 +1008,7 @@ class TestTryAndCatchHandlers(unittest.TestCase):
 
         self.assertEqual(handler_list.size, 2)
         self.assertEqual(len(handler_list), 2)
-        self.assertEqual(handler_list.__slots__, ("_buffer", "size"))
+        self.assertEqual(handler_list.__slots__, ("_buffer",))
         self.assertIs(CatchHandlerMap, EncodedCatchHandlerList)
 
         # Iteration yields relative byte offsets of handlers
@@ -1061,7 +1071,7 @@ class TestCodeItem(unittest.TestCase):
             debug_info_off=NO_OFFSET,
             insns=memoryview(b"\x0e\x00"),  # return-void
             tries=TryTable(),
-            handlers=EncodedCatchHandlerList(),
+            handlers=None,
         )
         with self.assertRaises(FrozenInstanceError):
             item.registers_size = 4  # type: ignore[misc]
@@ -1091,13 +1101,19 @@ class TestCodeItem(unittest.TestCase):
             debug_info_off=NO_OFFSET,
             insns=memoryview(bytecode),
             tries=TryTable(),
+            handlers=None,
         )
         self.assertEqual(item_no_tries.insns_size, 2)
         self.assertEqual(item_no_tries.tries_size, 0)
+        self.assertIsNone(item_no_tries.handlers)
+        self.assertIsNone(item_no_tries.find_catch_handler(0))
+        with self.assertRaises(ValueError):
+            item_no_tries.get_catch_handler(TryItem(0, 1, 0))
 
         raw = item_no_tries.to_bytes()
         cursor = Cursor(raw)
         parsed = CodeItem.from_cursor(cursor)
+        self.assertIsNone(parsed.handlers)
 
         # Confirm insns is a zero-copy memoryview slice
         self.assertIsInstance(parsed.insns, memoryview)
@@ -1181,6 +1197,7 @@ class TestCodeItem(unittest.TestCase):
             debug_info_off=NO_OFFSET,
             insns=memoryview(b"\x00\x00"),
             tries=TryTable(),
+            handlers=None,
         )
         self.assertIsNone(code_empty.find_try_item(10))
         self.assertIsNone(code_empty.find_catch_handler(10))

@@ -11,10 +11,12 @@ from typing import BinaryIO, ClassVar, Final, Self, overload
 
 from dexbuf.cursor import Cursor
 from dexbuf.dex import DexFile
+from dexbuf.zip import ZipArchive
 
 __all__ = [
     "SUPPORTED_VDEX_VERSIONS",
     "VDEX_FILE_MAGIC",
+    "VDEX_INVALID_MAGIC",
     "VdexFile",
     "VdexHeader",
     "VdexSectionHeader",
@@ -22,6 +24,7 @@ __all__ = [
 ]
 
 VDEX_FILE_MAGIC: Final[bytes] = b"vdex"
+VDEX_INVALID_MAGIC: Final[bytes] = b"wdex"
 SUPPORTED_VDEX_VERSIONS: Final[frozenset[str]] = frozenset({"027"})
 
 
@@ -48,6 +51,11 @@ class VdexHeader:
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse a VdexHeader from cursor."""
         magic, version_bytes, number_of_sections = cursor.unpack(cls.STRUCT)
+
+        if magic == VDEX_INVALID_MAGIC:
+            raise ValueError(
+                f"VDEX file is marked invalid / incompletely written: magic is {magic!r}"
+            )
 
         if magic != VDEX_FILE_MAGIC:
             raise ValueError(
@@ -273,6 +281,40 @@ class VdexFile(Sequence[VdexSectionHeader]):
         offset = VdexHeader.STRUCT.size + idx * VdexSectionHeader.STRUCT.size
         return VdexSectionHeader.from_buffer(self._buffer, offset)
 
+    # Section Presence Properties
+    @property
+    def has_checksum_section(self) -> bool:
+        """Return True if CHECKSUM section is present and non-empty."""
+        sec = self.get_section(VdexSectionKind.CHECKSUM)
+        return sec is not None and sec.size > 0
+
+    @property
+    def has_verifier_deps_section(self) -> bool:
+        """Return True if VERIFIER_DEPS section is present and non-empty."""
+        sec = self.get_section(VdexSectionKind.VERIFIER_DEPS)
+        return sec is not None and sec.size > 0
+
+    @property
+    def has_type_lookup_table_section(self) -> bool:
+        """Return True if TYPE_LOOKUP_TABLE section is present and non-empty."""
+        sec = self.get_section(VdexSectionKind.TYPE_LOOKUP_TABLE)
+        return sec is not None and sec.size > 0
+
+    @property
+    def computed_file_size(self) -> int:
+        """Compute expected minimum VDEX file size based on header and section extents."""
+        hdr_size = VdexHeader.STRUCT.size
+        sec_table_size = self.header.number_of_sections * VdexSectionHeader.STRUCT.size
+        min_size = hdr_size + sec_table_size
+        for sec in self:
+            min_size = max(min_size, sec.offset + sec.size)
+        return min_size
+
+    @property
+    def is_valid(self) -> bool:
+        """Return True if buffer is large enough to contain all section payloads."""
+        return len(self._buffer) >= self.computed_file_size
+
     # DEX File Streaming & Interoperability
     @property
     def has_dex_section(self) -> bool:
@@ -366,3 +408,50 @@ class VdexFile(Sequence[VdexSectionHeader]):
             if i == idx:
                 return DexFile(dex_data)
         raise IndexError(f"DEX file index {index} out of range (total {num})")
+
+    def verify_checksums(self, apk: ZipArchive | None = None) -> bool:
+        """Verify DEX checksums against the CHECKSUM section.
+
+        - If VDEX contains DEX files (self.has_dex_section is True):
+            apk must be None. Compares the checksum in each contained DEX header
+            against the checksums in the VDEX.
+            Raises ValueError if apk is not None.
+        - If VDEX does not contain DEX files (self.has_dex_section is False):
+            apk must be provided (ZipArchive). Compares the checksums in the VDEX
+            against the CRC-32 of each multidex entry in the APK.
+            Raises ValueError if apk is None.
+
+        Returns:
+            True if all checksums match and counts match.
+            False if the CHECKSUM section is absent/empty or if any checksum/count mismatches.
+        """
+        if not self.has_checksum_section:
+            return False
+
+        checksums = self.checksums
+        if len(checksums) == 0:
+            return False
+
+        if self.has_dex_section:
+            if apk is not None:
+                raise ValueError("APK must be None when DEX files are present in VDEX")
+            dex_files = self.dex_files
+            if len(dex_files) != len(checksums):
+                return False
+            return all(
+                dex.header.checksum == expected_chk
+                for dex, expected_chk in zip(dex_files, checksums, strict=True)
+            )
+        else:
+            if apk is None:
+                raise ValueError("APK must be provided when DEX files are not present in VDEX")
+            for i, expected_crc in enumerate(checksums):
+                entry_name = "classes.dex" if i == 0 else f"classes{i + 1}.dex"
+                if entry_name not in apk:
+                    return False
+                if apk.getinfo(entry_name).crc32 != expected_crc:
+                    return False
+            extra_entry = f"classes{len(checksums) + 1}.dex"
+            if extra_entry in apk:
+                return False
+            return True

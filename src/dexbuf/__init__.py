@@ -97,6 +97,7 @@ from dexbuf.value import (
 from dexbuf.vdex import (
     SUPPORTED_VDEX_VERSIONS,
     VDEX_FILE_MAGIC,
+    VDEX_INVALID_MAGIC,
     VdexFile,
     VdexHeader,
     VdexSectionHeader,
@@ -126,6 +127,7 @@ __all__ = [
     "SUPPORTED_DEX_VERSIONS",
     "SUPPORTED_VDEX_VERSIONS",
     "VDEX_FILE_MAGIC",
+    "VDEX_INVALID_MAGIC",
     "AccessFlags",
     "AnnotationElement",
     "AnnotationItem",

@@ -11,6 +11,7 @@ from dexbuf import (
     ENDIAN_CONSTANT,
     NO_INDEX,
     NO_OFFSET,
+    REVERSE_ENDIAN_CONSTANT,
     AnnotationElement,
     AnnotationItem,
     AnnotationOffItem,
@@ -706,6 +707,72 @@ class TestDexFile(unittest.TestCase):
             self.assertTrue(opened_dex.verify_checksum())
             self.assertTrue(opened_dex.verify_signature())
             self.assertEqual(opened_dex.get_string(Idx[StringIdItem](0)), "I")
+
+    def test_header_verification(self) -> None:
+        """Verify fail-fast header validation and inspection methods."""
+        # 1. Valid DEX passes verify=True and default verify
+        dex_default = DexFile(self.dex_bytes)
+        dex_verified = DexFile(self.dex_bytes, verify=True)
+        self.assertTrue(dex_default.verify_magic())
+        self.assertTrue(dex_default.verify_endian())
+        self.assertTrue(dex_default.verify_header())
+        self.assertTrue(dex_verified.verify_header())
+
+        # 2. Corrupt magic
+        corrupt_magic_buf = bytearray(self.dex_bytes)
+        corrupt_magic_buf[0:8] = b"badmagic"
+        with self.assertRaises(ValueError) as ctx:
+            DexFile(corrupt_magic_buf, verify=True)
+        self.assertIn("Invalid DEX magic", str(ctx.exception))
+
+        dex_corrupt_magic = DexFile(corrupt_magic_buf, verify=False)
+        self.assertFalse(dex_corrupt_magic.verify_magic())
+        self.assertFalse(dex_corrupt_magic.verify_header())
+        self.assertTrue(dex_corrupt_magic.verify_endian())
+
+        # 3. Unsupported version
+        unsupported_ver_buf = bytearray(self.dex_bytes)
+        unsupported_ver_buf[0:8] = b"dex\n999\x00"
+        with self.assertRaises(ValueError) as ctx:
+            DexFile(unsupported_ver_buf, verify=True)
+        self.assertIn("Unsupported DEX version", str(ctx.exception))
+
+        dex_unsupported_ver = DexFile(unsupported_ver_buf, verify=False)
+        self.assertFalse(dex_unsupported_ver.verify_magic())
+        self.assertFalse(dex_unsupported_ver.verify_header())
+
+        # 4. Reverse-endian tag
+        reverse_endian_buf = bytearray(self.dex_bytes)
+        reverse_endian_buf[40:44] = REVERSE_ENDIAN_CONSTANT.to_bytes(4, "little")
+        with self.assertRaises(ValueError) as ctx:
+            DexFile(reverse_endian_buf, verify=True)
+        self.assertIn("Reverse-endian DEX files are not supported", str(ctx.exception))
+
+        dex_reverse_endian = DexFile(reverse_endian_buf, verify=False)
+        self.assertFalse(dex_reverse_endian.verify_endian())
+        self.assertFalse(dex_reverse_endian.verify_header())
+
+        # 5. Invalid endian tag
+        invalid_endian_buf = bytearray(self.dex_bytes)
+        invalid_endian_buf[40:44] = (0x1234_1234).to_bytes(4, "little")
+        with self.assertRaises(ValueError) as ctx:
+            DexFile(invalid_endian_buf, verify=True)
+        self.assertIn("Invalid DEX endian tag", str(ctx.exception))
+
+        dex_invalid_endian = DexFile(invalid_endian_buf, verify=False)
+        self.assertFalse(dex_invalid_endian.verify_endian())
+        self.assertFalse(dex_invalid_endian.verify_header())
+
+        # 6. DexFile.open pass-through
+        with tempfile.NamedTemporaryFile(suffix=".dex", delete=True) as tmp:
+            tmp.write(corrupt_magic_buf)
+            tmp.flush()
+
+            with self.assertRaises(ValueError):
+                DexFile.open(tmp.name, verify=True)
+
+            opened_unverified = DexFile.open(tmp.name, verify=False)
+            self.assertFalse(opened_unverified.verify_magic())
 
     def test_utf16_ordering_find_string_and_type_id(self) -> None:
         """Verify find_string_id and find_type_id on tables with UTF-16 code unit ordering."""

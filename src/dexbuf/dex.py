@@ -10,6 +10,7 @@ from collections.abc import Buffer, Iterator, Sequence
 from typing import Any, Self, overload
 
 from dexbuf.items import (
+    REVERSE_ENDIAN_CONSTANT,
     AnnotationsDirectoryItem,
     ClassDataItem,
     ClassDefItem,
@@ -100,9 +101,11 @@ class DexFile:
     See https://source.android.com/docs/core/runtime/dex-format
     """
 
-    def __init__(self, buffer: Buffer) -> None:
+    def __init__(self, buffer: Buffer, *, verify: bool = True) -> None:
         self._buffer: memoryview = memoryview(buffer)
         self.header: HeaderItem = HeaderItem.from_buffer(self._buffer, Offset[HeaderItem](0))
+        if verify:
+            self._verify_header()
         self._map_list: MapList | None = None
 
         self.string_ids: TableSequence[StringIdItem] = TableSequence(
@@ -141,6 +144,28 @@ class DexFile:
             self.header.class_defs_size,
             ClassDefItem,
         )
+
+    def verify_magic(self) -> bool:
+        """Return True if header.magic is valid DEX magic with supported version."""
+        return self.header.is_supported_version
+
+    def verify_endian(self) -> bool:
+        """Return True if header.endian_tag matches ENDIAN_CONSTANT."""
+        return self.header.is_valid_endian
+
+    def verify_header(self) -> bool:
+        """Return True if header magic and endianness are valid."""
+        return self.verify_magic() and self.verify_endian()
+
+    def _verify_header(self) -> None:
+        if not self.header.is_valid_magic:
+            raise ValueError(f"Invalid DEX magic: {self.header.magic!r}")
+        if not self.header.is_supported_version:
+            raise ValueError(f"Unsupported DEX version: {self.header.version!r}")
+        if self.header.endian_tag == REVERSE_ENDIAN_CONSTANT:
+            raise ValueError("Reverse-endian DEX files are not supported")
+        if not self.header.is_valid_endian:
+            raise ValueError(f"Invalid DEX endian tag: {hex(self.header.endian_tag)}")
 
     @property
     def map_list(self) -> MapList:
@@ -289,8 +314,8 @@ class DexFile:
         return EncodedArrayItem.from_buffer(self._buffer, offset).value
 
     @classmethod
-    def open(cls, path: str | os.PathLike[str]) -> Self:
+    def open(cls, path: str | os.PathLike[str], *, verify: bool = True) -> Self:
         """Open a DEX file from filesystem."""
         with open(path, "rb") as f:
             data = f.read()
-        return cls(data)
+        return cls(data, verify=verify)

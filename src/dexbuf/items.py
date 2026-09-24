@@ -132,6 +132,21 @@ class HeaderItem:
         return self.magic[4:7].decode("ascii")
 
     @property
+    def is_valid_magic(self) -> bool:
+        """Check if magic matches DEX specification format (b'dex\n' + 3 ascii digits + b'\x00')."""
+        return (
+            len(self.magic) == 8
+            and self.magic.startswith(b"dex\n")
+            and self.magic.endswith(b"\x00")
+            and self.magic[4:7].isdigit()
+        )
+
+    @property
+    def is_supported_version(self) -> bool:
+        """Check if version is within SUPPORTED_DEX_VERSIONS."""
+        return self.is_valid_magic and self.version in SUPPORTED_DEX_VERSIONS
+
+    @property
     def is_valid_endian(self) -> bool:
         """Check if endian_tag matches ENDIAN_CONSTANT."""
         return self.endian_tag == ENDIAN_CONSTANT

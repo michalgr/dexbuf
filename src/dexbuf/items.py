@@ -59,6 +59,7 @@ __all__ = [
     "HeaderItem",
     "HiddenapiClassDataItem",
     "HiddenapiRestrictionFlag",
+    "InstructionBuffer",
     "ItemType",
     "MapItem",
     "MapItemType",
@@ -912,6 +913,72 @@ class DebugInfoItem:
         )
 
 
+class InstructionBuffer:
+    """Zero-allocation memoryview wrapper over Dalvik bytecode instructions."""
+
+    __slots__ = ("_buffer",)
+
+    def __init__(self, buffer: Buffer) -> None:
+        self._buffer: memoryview = memoryview(buffer)
+
+    @property
+    def code_units(self) -> int:
+        """Size of bytecode in 16-bit code units."""
+        return len(self._buffer) // 2
+
+    def __len__(self) -> int:
+        """Number of 16-bit code units in bytecode."""
+        return self.code_units
+
+    def at(self, pc: int) -> IOP:
+        """Parse and return the Dalvik instruction or payload at program counter pc in O(1).
+
+        Args:
+            pc: Program counter (16-bit code unit address).
+        """
+        if pc < 0:
+            pc += self.code_units
+        offset = pc * 2
+        if offset < 0 or offset >= len(self._buffer):
+            raise IndexError(
+                f"Program counter {pc} out of bounds (total code units: {self.code_units})"
+            )
+        from dexbuf.instructions import parse_iop
+
+        return parse_iop(Cursor(self._buffer, offset))
+
+    def __getitem__(self, pc: int) -> IOP:
+        """Parse and return the Dalvik instruction or payload at program counter pc in O(1)."""
+        return self.at(pc)
+
+    def __iter__(self) -> Iterator[IOP]:
+        """Iterate over all Dalvik instructions and payloads lazily."""
+        from dexbuf.instructions import parse_iop
+
+        cursor = Cursor(self._buffer)
+        while not cursor.is_eof:
+            yield parse_iop(cursor)
+
+    def parse(self) -> tuple[IOP, ...]:
+        """Parse all Dalvik instructions and payloads into a tuple."""
+        return tuple(self)
+
+    def to_bytes(self) -> bytes:
+        """Encode this InstructionBuffer to raw DEX bytes."""
+        return bytes(self._buffer)
+
+    def __buffer__(self, flags: int) -> memoryview:
+        """Support Python buffer protocol (collections.abc.Buffer)."""
+        return self._buffer
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, InstructionBuffer):
+            return bytes(self._buffer) == bytes(other._buffer)
+        if isinstance(other, Buffer):
+            return bytes(self._buffer) == bytes(other)
+        return False
+
+
 @dataclass(slots=True, frozen=True)
 class CodeItem:
     """Code item record representing method execution header, bytecode, and try/catch data.
@@ -926,14 +993,14 @@ class CodeItem:
     ins_size: int
     outs_size: int
     debug_info_off: Offset[DebugInfoItem]
-    insns: memoryview
+    insns: InstructionBuffer
     tries: TryTable = dataclass_field(default_factory=TryTable)
     handlers: EncodedCatchHandlerList | None = dataclass_field(default=None)
 
     @property
     def insns_size(self) -> int:
         """Size of bytecode instructions in 16-bit code units."""
-        return len(self.insns) // 2
+        return len(self.insns)
 
     @property
     def tries_size(self) -> int:
@@ -982,7 +1049,7 @@ class CodeItem:
             insns_size,
         ) = cursor.unpack(cls.HEADER)
 
-        insns = cursor.read_slice(insns_size * 2)
+        insns = InstructionBuffer(cursor.read_slice(insns_size * 2))
 
         if tries_size > 0:
             if insns_size % 2 != 0:
@@ -1010,18 +1077,14 @@ class CodeItem:
 
     def iter_iops(self) -> Iterator[IOP]:
         """Iterate over Dalvik instructions and payloads in bytecode lazily."""
-        from dexbuf.instructions import parse_iop
-
-        cursor = Cursor(self.insns)
-        while not cursor.is_eof:
-            yield parse_iop(cursor)
+        return iter(self.insns)
 
     def __iter__(self) -> Iterator[IOP]:
-        return self.iter_iops()
+        return iter(self.insns)
 
     def parse_iops(self) -> tuple[IOP, ...]:
         """Parse all Dalvik instructions and payloads into a tuple."""
-        return tuple(self.iter_iops())
+        return self.insns.parse()
 
     def to_bytes(self) -> bytes:
         """Encode this CodeItem to raw DEX bytes."""
@@ -1033,7 +1096,7 @@ class CodeItem:
             self.debug_info_off,
             self.insns_size,
         )
-        insns_bytes = bytes(self.insns)
+        insns_bytes = self.insns.to_bytes()
         padding_bytes = b"\x00\x00" if (self.tries_size > 0 and self.insns_size % 2 != 0) else b""
         tries_bytes = self.tries.to_bytes()
         handlers_bytes = self.handlers.to_bytes() if self.handlers is not None else b""

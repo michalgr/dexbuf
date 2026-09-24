@@ -69,6 +69,7 @@ from dexbuf.items import (
     StringDataItem,
     StringIdItem,
     TryItem,
+    TryTable,
     TypeIdItem,
     TypeList,
 )
@@ -172,6 +173,7 @@ __all__ = [
     "StringDataItem",
     "StringIdItem",
     "TryItem",
+    "TryTable",
     "TypeIdItem",
     "TypeList",
     "ValueType",

@@ -46,6 +46,7 @@ from dexbuf import (
     StringDataItem,
     StringIdItem,
     TryItem,
+    TryTable,
     TypeIdItem,
     TypeList,
     ValueType,
@@ -81,7 +82,7 @@ def create_sample_dex() -> bytes:
         outs_size=0,
         debug_info_off=NO_OFFSET,
         insns=memoryview(bytecode),
-        tries=(),
+        tries=TryTable(),
         handlers=None,
     )
     code_item_bytes = code_item.to_bytes()

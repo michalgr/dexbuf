@@ -70,6 +70,7 @@ __all__ = [
     "StringDataItem",
     "StringIdItem",
     "TryItem",
+    "TryTable",
     "TypeIdItem",
     "TypeList",
 ]
@@ -597,6 +598,15 @@ class TryItem:
     insn_count: int
     handler_off: int
 
+    @property
+    def end_addr(self) -> int:
+        """Exclusive end address of this try block in 16-bit code units."""
+        return self.start_addr + self.insn_count
+
+    def covers(self, addr: int) -> bool:
+        """Return True if instruction address (in 16-bit code units) is within this try block."""
+        return self.start_addr <= addr < self.end_addr
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse a TryItem from a Cursor."""
@@ -615,6 +625,55 @@ class TryItem:
     def to_bytes(self) -> bytes:
         """Encode this TryItem to raw DEX bytes."""
         return self.STRUCT.pack(self.start_addr, self.insn_count, self.handler_off)
+
+
+class TryTable(Sequence[TryItem]):
+    """Lazy zero-allocation indexed view over contiguous TryItem records."""
+
+    __slots__ = ("_buffer",)
+
+    def __init__(self, buffer: memoryview | None = None) -> None:
+        self._buffer = buffer if buffer is not None else memoryview(b"")
+
+    @classmethod
+    def from_tries(cls, tries: Sequence[TryItem]) -> Self:
+        """Construct a TryTable from a sequence of TryItem objects."""
+        return cls(memoryview(b"".join(t.to_bytes() for t in tries)))
+
+    def __len__(self) -> int:
+        return len(self._buffer) // TryItem.STRUCT.size
+
+    @overload
+    def __getitem__(self, index: int) -> TryItem: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[TryItem, ...]: ...
+
+    def __getitem__(self, index: int | slice) -> TryItem | tuple[TryItem, ...]:
+        size = len(self)
+        if isinstance(index, slice):
+            return tuple(self[i] for i in range(*index.indices(size)))
+        if index < 0:
+            index += size
+        if index < 0 or index >= size:
+            raise IndexError(f"Index {index} out of bounds for TryTable of size {size}")
+        offset = index * TryItem.STRUCT.size
+        return TryItem.from_buffer(self._buffer, Offset[TryItem](offset))
+
+    def __iter__(self) -> Iterator[TryItem]:
+        for i in range(len(self)):
+            yield self[i]
+
+    def to_bytes(self) -> bytes:
+        """Encode this TryTable to raw DEX bytes."""
+        return bytes(self._buffer)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, TryTable):
+            return bytes(self._buffer) == bytes(other._buffer)
+        if isinstance(other, Sequence):
+            return len(self) == len(other) and all(a == b for a, b in zip(self, other, strict=True))
+        return False
 
 
 @dataclass(slots=True, frozen=True)
@@ -799,7 +858,7 @@ class CodeItem:
     outs_size: int
     debug_info_off: Offset[DebugInfoItem]
     insns: memoryview
-    tries: tuple[TryItem, ...]
+    tries: TryTable
     handlers: EncodedCatchHandlerList | None
 
     @property
@@ -811,6 +870,21 @@ class CodeItem:
     def tries_size(self) -> int:
         """Number of try items."""
         return len(self.tries)
+
+    def find_try_item(self, addr: int) -> TryItem | None:
+        """Find the TryItem covering bytecode address addr using binary search."""
+        low = 0
+        high = len(self.tries) - 1
+        while low <= high:
+            mid = (low + high) // 2
+            item = self.tries[mid]
+            if item.covers(addr):
+                return item
+            if addr < item.start_addr:
+                high = mid - 1
+            else:
+                low = mid + 1
+        return None
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -829,10 +903,10 @@ class CodeItem:
         if tries_size > 0:
             if insns_size % 2 != 0:
                 cursor.skip(2)
-            tries = tuple(TryItem.from_cursor(cursor) for _ in range(tries_size))
+            tries = TryTable(cursor.read_slice(tries_size * 8))
             handlers = EncodedCatchHandlerList.from_cursor(cursor)
         else:
-            tries = ()
+            tries = TryTable()
             handlers = None
 
         return cls(
@@ -877,7 +951,7 @@ class CodeItem:
         )
         insns_bytes = bytes(self.insns)
         padding_bytes = b"\x00\x00" if (self.tries_size > 0 and self.insns_size % 2 != 0) else b""
-        tries_bytes = b"".join(t.to_bytes() for t in self.tries)
+        tries_bytes = self.tries.to_bytes()
         handlers_bytes = self.handlers.to_bytes() if self.handlers is not None else b""
 
         return header_bytes + insns_bytes + padding_bytes + tries_bytes + handlers_bytes

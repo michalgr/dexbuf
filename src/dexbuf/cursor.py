@@ -179,6 +179,20 @@ class Cursor:
 
     # --- Variable-length entity decoding ---
 
+    def skip_leb128(self) -> None:
+        """Skip a single LEB128 sequence (1 to 5 bytes) and advance offset.
+
+        See https://source.android.com/docs/core/runtime/dex-format#leb128
+        """
+        for _ in range(5):
+            if self._offset >= len(self._buffer):
+                raise EOFError("Unexpected EOF while skipping LEB128")
+            b = self._buffer[self._offset]
+            self._offset += 1
+            if not (b & 0x80):
+                return
+        raise ValueError("Invalid LEB128 sequence: exceeds 5 bytes")
+
     def read_uleb128(self) -> int:
         """Read an unsigned LEB128 (1 to 5 bytes).
 

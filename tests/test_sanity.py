@@ -39,6 +39,7 @@ class TestSanity(unittest.TestCase):
             "ArgumentCount",
             "BranchOffset",
             "CallSiteIdItem",
+            "CatchHandlerMap",
             "CentralDirectoryHeader",
             "ClassDataItem",
             "ClassDefItem",

@@ -24,6 +24,7 @@ from dexbuf import (
     AnnotationSetRefList,
     AnnotationVisibility,
     CallSiteIdItem,
+    CatchHandlerMap,
     ClassDataItem,
     ClassDefItem,
     CodeItem,
@@ -904,6 +905,40 @@ class TestTryAndCatchHandlers(unittest.TestCase):
         parsed = EncodedTypeAddrPair.from_cursor(Cursor(raw))
         self.assertEqual(parsed, pair)
 
+    def test_cursor_skip_leb128(self) -> None:
+        """Test Cursor.skip_leb128 method."""
+        # 1-byte LEB128 (0x05)
+        # 2-byte LEB128 (0x80, 0x01 = 128)
+        # 5-byte LEB128 (0x80, 0x80, 0x80, 0x80, 0x01)
+        # Trailing byte 0x42
+        buf = bytes([0x05, 0x80, 0x01, 0x80, 0x80, 0x80, 0x80, 0x01, 0x42])
+        cursor = Cursor(buf)
+
+        # Skip 1-byte
+        cursor.skip_leb128()
+        self.assertEqual(cursor.tell(), 1)
+
+        # Skip 2-byte
+        cursor.skip_leb128()
+        self.assertEqual(cursor.tell(), 3)
+
+        # Skip 5-byte
+        cursor.skip_leb128()
+        self.assertEqual(cursor.tell(), 8)
+
+        # Read remaining 1 byte u8
+        self.assertEqual(cursor.read_u8(), 0x42)
+
+        # EOFError test
+        truncated_cursor = Cursor(bytes([0x80, 0x80]))
+        with self.assertRaises(EOFError):
+            truncated_cursor.skip_leb128()
+
+        # ValueError test (exceeds 5 bytes)
+        overflow_cursor = Cursor(bytes([0x80, 0x80, 0x80, 0x80, 0x80, 0x01]))
+        with self.assertRaises(ValueError):
+            overflow_cursor.skip_leb128()
+
     def test_encoded_catch_handler(self) -> None:
         pair1 = EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](1), addr=0x10)
         pair2 = EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](2), addr=0x20)
@@ -911,6 +946,11 @@ class TestTryAndCatchHandlers(unittest.TestCase):
         # Handler with catch-all (size <= 0)
         handler_catch_all = EncodedCatchHandler(handlers=(pair1, pair2), catch_all_addr=0x30)
         self.assertEqual(handler_catch_all.size, -2)
+        self.assertTrue(handler_catch_all.catches_all)
+        self.assertEqual(handler_catch_all.get_target(Idx[TypeIdItem](1)), 0x10)
+        self.assertEqual(handler_catch_all.get_target(Idx[TypeIdItem](2)), 0x20)
+        self.assertEqual(handler_catch_all.get_target(Idx[TypeIdItem](3)), 0x30)
+
         with self.assertRaises((TypeError, AttributeError)):
             handler_catch_all.size = 1  # type: ignore[misc]
 
@@ -923,26 +963,64 @@ class TestTryAndCatchHandlers(unittest.TestCase):
         # Handler without catch-all (size > 0)
         handler_no_catch_all = EncodedCatchHandler(handlers=(pair1, pair2), catch_all_addr=None)
         self.assertEqual(handler_no_catch_all.size, 2)
+        self.assertFalse(handler_no_catch_all.catches_all)
+        self.assertEqual(handler_no_catch_all.get_target(Idx[TypeIdItem](1)), 0x10)
+        self.assertIsNone(handler_no_catch_all.get_target(Idx[TypeIdItem](3)))
+
         raw2 = handler_no_catch_all.to_bytes()
         parsed2 = EncodedCatchHandler.from_cursor(Cursor(raw2))
         self.assertEqual(parsed2, handler_no_catch_all)
 
     def test_encoded_catch_handler_list(self) -> None:
-        handler = EncodedCatchHandler(
+        h1 = EncodedCatchHandler(
             handlers=(EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](5), addr=0x50),),
             catch_all_addr=None,
         )
-        handler_list = EncodedCatchHandlerList(list=(handler,))
+        h2 = EncodedCatchHandler(
+            handlers=(),
+            catch_all_addr=0x100,
+        )
 
-        self.assertEqual(handler_list.size, 1)
-        with self.assertRaises((TypeError, AttributeError)):
-            handler_list.size = 2  # type: ignore[misc]
+        handler_list = EncodedCatchHandlerList.from_handlers([h1, h2])
 
-        self.assertEqual(handler_list.__slots__, ("list",))
+        self.assertEqual(handler_list.size, 2)
+        self.assertEqual(len(handler_list), 2)
+        self.assertEqual(handler_list.__slots__, ("_buffer", "size"))
+        self.assertIs(CatchHandlerMap, EncodedCatchHandlerList)
 
+        # Iteration yields relative byte offsets of handlers
+        offsets = list(handler_list)
+        self.assertEqual(len(offsets), 2)
+        off1, off2 = offsets[0], offsets[1]
+        self.assertGreater(off1, 0)
+        self.assertGreater(off2, off1)
+
+        # Direct O(1) indexing by offset
+        self.assertEqual(handler_list[off1], h1)
+        self.assertEqual(handler_list[off2], h2)
+
+        # Mapping methods: keys, values, items, get
+        self.assertEqual(list(handler_list.keys()), [off1, off2])
+        self.assertEqual(list(handler_list.values()), [h1, h2])
+        self.assertEqual(list(handler_list.items()), [(off1, h1), (off2, h2)])
+        self.assertEqual(handler_list.get(off1), h1)
+        self.assertIsNone(handler_list.get(999))
+
+        # Invalid offset access raises KeyError
+        with self.assertRaises(KeyError):
+            _ = handler_list[0]
+        with self.assertRaises(KeyError):
+            _ = handler_list[-1]
+        with self.assertRaises(KeyError):
+            _ = handler_list[1000]
+
+        # Serialization & roundtrip
         raw = handler_list.to_bytes()
         parsed = EncodedCatchHandlerList.from_buffer(raw)
         self.assertEqual(parsed, handler_list)
+        self.assertEqual(parsed, {off1: h1, off2: h2})
+        self.assertNotEqual(parsed, {off1: h1})
+        self.assertNotEqual(parsed, "not a mapping")
 
 
 class TestCodeItem(unittest.TestCase):
@@ -970,7 +1048,7 @@ class TestCodeItem(unittest.TestCase):
             debug_info_off=NO_OFFSET,
             insns=memoryview(b"\x0e\x00"),  # return-void
             tries=TryTable(),
-            handlers=None,
+            handlers=EncodedCatchHandlerList(),
         )
         with self.assertRaises(FrozenInstanceError):
             item.registers_size = 4  # type: ignore[misc]
@@ -1000,7 +1078,6 @@ class TestCodeItem(unittest.TestCase):
             debug_info_off=NO_OFFSET,
             insns=memoryview(bytecode),
             tries=TryTable(),
-            handlers=None,
         )
         self.assertEqual(item_no_tries.insns_size, 2)
         self.assertEqual(item_no_tries.tries_size, 0)
@@ -1028,12 +1105,13 @@ class TestCodeItem(unittest.TestCase):
     def test_tries_and_padding_even_insns_size(self) -> None:
         # 2 code units (even) -> no padding before tries
         bytecode = b"\x00\x00\x0e\x00"
-        try_item = TryItem(start_addr=0, insn_count=1, handler_off=0)
         handler = EncodedCatchHandler(
             handlers=(EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](0), addr=2),),
             catch_all_addr=4,
         )
-        handlers = EncodedCatchHandlerList(list=(handler,))
+        handlers = EncodedCatchHandlerList.from_handlers([handler])
+        handler_off = next(iter(handlers))
+        try_item = TryItem(start_addr=0, insn_count=1, handler_off=handler_off)
 
         item = CodeItem(
             registers_size=1,
@@ -1048,16 +1126,19 @@ class TestCodeItem(unittest.TestCase):
         raw = item.to_bytes()
         parsed = CodeItem.from_buffer(raw)
         self.assertEqual(parsed, item)
+        self.assertEqual(parsed.get_catch_handler(try_item), handler)
+        self.assertEqual(parsed.find_catch_handler(0), handler)
 
     def test_tries_and_padding_odd_insns_size(self) -> None:
         # 1 code unit (odd) -> 2 bytes padding required before tries
         bytecode = b"\x0e\x00"  # return-void
-        try_item = TryItem(start_addr=0, insn_count=1, handler_off=0)
         handler = EncodedCatchHandler(
             handlers=(EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](1), addr=10),),
             catch_all_addr=None,
         )
-        handlers = EncodedCatchHandlerList(list=(handler,))
+        handlers = EncodedCatchHandlerList.from_handlers([handler])
+        handler_off = next(iter(handlers))
+        try_item = TryItem(start_addr=0, insn_count=1, handler_off=handler_off)
 
         item = CodeItem(
             registers_size=1,
@@ -1087,14 +1168,19 @@ class TestCodeItem(unittest.TestCase):
             debug_info_off=NO_OFFSET,
             insns=memoryview(b"\x00\x00"),
             tries=TryTable(),
-            handlers=None,
         )
         self.assertIsNone(code_empty.find_try_item(10))
+        self.assertIsNone(code_empty.find_catch_handler(10))
 
         # Multiple tries
-        t1 = TryItem(start_addr=10, insn_count=5, handler_off=0)  # 10..15
-        t2 = TryItem(start_addr=20, insn_count=10, handler_off=4)  # 20..30
-        t3 = TryItem(start_addr=35, insn_count=5, handler_off=8)  # 35..40
+        h1 = EncodedCatchHandler(handlers=(), catch_all_addr=0x10)
+        h2 = EncodedCatchHandler(handlers=(), catch_all_addr=0x20)
+        handlers = EncodedCatchHandlerList.from_handlers([h1, h2])
+        off1, off2 = list(handlers)
+
+        t1 = TryItem(start_addr=10, insn_count=5, handler_off=off1)  # 10..15
+        t2 = TryItem(start_addr=20, insn_count=10, handler_off=off2)  # 20..30
+        t3 = TryItem(start_addr=35, insn_count=5, handler_off=off1)  # 35..40
 
         code = CodeItem(
             registers_size=1,
@@ -1103,7 +1189,7 @@ class TestCodeItem(unittest.TestCase):
             debug_info_off=NO_OFFSET,
             insns=memoryview(b"\x00\x00"),
             tries=TryTable.from_tries([t1, t2, t3]),
-            handlers=None,
+            handlers=handlers,
         )
 
         # Lookups before, inside, gap, after

@@ -4,8 +4,9 @@ See https://source.android.com/docs/core/runtime/dex-format
 """
 
 import struct
-from collections.abc import Buffer, Iterator, Sequence
+from collections.abc import Buffer, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, overload, runtime_checkable
 
@@ -42,6 +43,7 @@ __all__ = [
     "AnnotationVisibility",
     "AnnotationsDirectoryItem",
     "CallSiteIdItem",
+    "CatchHandlerMap",
     "ClassDataItem",
     "ClassDefItem",
     "CodeItem",
@@ -713,6 +715,18 @@ class EncodedCatchHandler:
         """Signed size of handlers sequence (negative if catch-all address present)."""
         return -len(self.handlers) if self.catch_all_addr is not None else len(self.handlers)
 
+    @property
+    def catches_all(self) -> bool:
+        """Return True if this handler has a catch-all address."""
+        return self.catch_all_addr is not None
+
+    def get_target(self, type_idx: Idx[TypeIdItem]) -> int | None:
+        """Return target bytecode address for type_idx, or catch_all_addr if unmatched."""
+        for pair in self.handlers:
+            if pair.type_idx == type_idx:
+                return pair.addr
+        return self.catch_all_addr
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse an EncodedCatchHandler from a Cursor."""
@@ -735,35 +749,83 @@ class EncodedCatchHandler:
         return res
 
 
-@dataclass(slots=True, frozen=True)
-class EncodedCatchHandlerList:
-    """Encoded catch handler list structure.
+class EncodedCatchHandlerList(Mapping[int, EncodedCatchHandler]):
+    """Lazy buffer-backed EncodedCatchHandlerList implementing Mapping[int, EncodedCatchHandler].
 
     See https://source.android.com/docs/core/runtime/dex-format#encoded-catch-handler-list
     """
 
-    list: tuple[EncodedCatchHandler, ...]
+    __slots__ = ("_buffer", "size")
 
-    @property
-    def size(self) -> int:
-        """Number of catch handlers in list."""
-        return len(self.list)
+    def __init__(self, size: int = 0, buffer: memoryview | None = None) -> None:
+        self.size: int = size
+        self._buffer: memoryview = buffer if buffer is not None else memoryview(b"")
+
+    @classmethod
+    def from_handlers(cls, handlers: Sequence[EncodedCatchHandler]) -> Self:
+        """Construct an EncodedCatchHandlerList from a sequence of EncodedCatchHandler objects."""
+        encoded = encode_uleb128(len(handlers)) + b"".join(h.to_bytes() for h in handlers)
+        return cls(size=len(handlers), buffer=memoryview(encoded))
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse an EncodedCatchHandlerList from a Cursor."""
+        start = cursor.tell()
         size = cursor.read_uleb128()
-        handlers = tuple(EncodedCatchHandler.from_cursor(cursor) for _ in range(size))
-        return cls(list=handlers)
+        for _ in range(size):
+            h_size = cursor.read_sleb128()
+            for _ in range(abs(h_size)):
+                cursor.skip_leb128()
+                cursor.skip_leb128()
+            if h_size <= 0:
+                cursor.skip_leb128()
+        end = cursor.tell()
+        return cls(size=size, buffer=cursor._buffer[start:end])
 
     @classmethod
     def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
         """Parse an EncodedCatchHandlerList from a buffer starting at offset."""
         return cls.from_cursor(Cursor(buffer, offset))
 
+    def __len__(self) -> int:
+        return self.size
+
+    def __getitem__(self, offset: int) -> EncodedCatchHandler:
+        if offset <= 0 or offset >= len(self._buffer):
+            raise KeyError(f"Invalid handler offset {offset}")
+        try:
+            return EncodedCatchHandler.from_cursor(Cursor(self._buffer, offset))
+        except (EOFError, ValueError) as e:
+            raise KeyError(f"Failed to parse EncodedCatchHandler at offset {offset}") from e
+
+    def __iter__(self) -> Iterator[int]:
+        if not self._buffer or self.size == 0:
+            return
+        cursor = Cursor(self._buffer)
+        _ = cursor.read_uleb128()
+        for _ in range(self.size):
+            off = cursor.tell()
+            yield off
+            h_size = cursor.read_sleb128()
+            for _ in range(abs(h_size)):
+                cursor.skip_leb128()
+                cursor.skip_leb128()
+            if h_size <= 0:
+                cursor.skip_leb128()
+
     def to_bytes(self) -> bytes:
         """Encode this EncodedCatchHandlerList to raw DEX bytes."""
-        return encode_uleb128(self.size) + b"".join(h.to_bytes() for h in self.list)
+        return bytes(self._buffer)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, EncodedCatchHandlerList):
+            return self.size == other.size and bytes(self._buffer) == bytes(other._buffer)
+        if isinstance(other, Mapping):
+            return len(self) == len(other) and all(k in other and self[k] == other[k] for k in self)
+        return False
+
+
+CatchHandlerMap = EncodedCatchHandlerList
 
 
 @dataclass(slots=True, frozen=True)
@@ -858,8 +920,8 @@ class CodeItem:
     outs_size: int
     debug_info_off: Offset[DebugInfoItem]
     insns: memoryview
-    tries: TryTable
-    handlers: EncodedCatchHandlerList | None
+    tries: TryTable = dataclass_field(default_factory=TryTable)
+    handlers: EncodedCatchHandlerList = dataclass_field(default_factory=EncodedCatchHandlerList)
 
     @property
     def insns_size(self) -> int:
@@ -886,6 +948,17 @@ class CodeItem:
                 low = mid + 1
         return None
 
+    def get_catch_handler(self, try_item: TryItem) -> EncodedCatchHandler:
+        """Get the EncodedCatchHandler for the given TryItem."""
+        return self.handlers[try_item.handler_off]
+
+    def find_catch_handler(self, addr: int) -> EncodedCatchHandler | None:
+        """Find the EncodedCatchHandler protecting bytecode address addr."""
+        item = self.find_try_item(addr)
+        if item is None:
+            return None
+        return self.get_catch_handler(item)
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse a CodeItem from a Cursor."""
@@ -907,7 +980,7 @@ class CodeItem:
             handlers = EncodedCatchHandlerList.from_cursor(cursor)
         else:
             tries = TryTable()
-            handlers = None
+            handlers = EncodedCatchHandlerList()
 
         return cls(
             registers_size=registers_size,
@@ -952,7 +1025,7 @@ class CodeItem:
         insns_bytes = bytes(self.insns)
         padding_bytes = b"\x00\x00" if (self.tries_size > 0 and self.insns_size % 2 != 0) else b""
         tries_bytes = self.tries.to_bytes()
-        handlers_bytes = self.handlers.to_bytes() if self.handlers is not None else b""
+        handlers_bytes = self.handlers.to_bytes()
 
         return header_bytes + insns_bytes + padding_bytes + tries_bytes + handlers_bytes
 

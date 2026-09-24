@@ -83,7 +83,6 @@ def create_sample_dex() -> bytes:
         debug_info_off=NO_OFFSET,
         insns=memoryview(bytecode),
         tries=TryTable(),
-        handlers=None,
     )
     code_item_bytes = code_item.to_bytes()
 

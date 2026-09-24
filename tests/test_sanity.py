@@ -86,6 +86,7 @@ class TestSanity(unittest.TestCase):
             "StringDataItem",
             "StringIdItem",
             "TryItem",
+            "TryTable",
             "TypeIdItem",
             "TypeList",
             "ValueType",

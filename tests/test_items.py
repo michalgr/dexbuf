@@ -57,6 +57,7 @@ from dexbuf import (
     StringDataItem,
     StringIdItem,
     TryItem,
+    TryTable,
     TypeIdItem,
     TypeList,
     ValueType,
@@ -834,6 +835,64 @@ class TestTryAndCatchHandlers(unittest.TestCase):
         parsed = TryItem.from_buffer(raw)
         self.assertEqual(parsed, item)
 
+        # Range methods
+        self.assertEqual(item.end_addr, 0x15)
+        self.assertFalse(item.covers(0x0F))
+        self.assertTrue(item.covers(0x10))
+        self.assertTrue(item.covers(0x12))
+        self.assertTrue(item.covers(0x14))
+        self.assertFalse(item.covers(0x15))
+        self.assertFalse(item.covers(0x20))
+
+    def test_try_table(self) -> None:
+        # Default initialization
+        empty_table = TryTable()
+        self.assertEqual(len(empty_table), 0)
+        self.assertEqual(empty_table.to_bytes(), b"")
+        self.assertEqual(empty_table.__slots__, ("_buffer",))
+
+        # from_tries classmethod
+        t1 = TryItem(start_addr=0x10, insn_count=5, handler_off=0x00)
+        t2 = TryItem(start_addr=0x20, insn_count=10, handler_off=0x08)
+        t3 = TryItem(start_addr=0x40, insn_count=4, handler_off=0x10)
+
+        table = TryTable.from_tries([t1, t2, t3])
+        self.assertEqual(len(table), 3)
+        self.assertEqual(table.to_bytes(), t1.to_bytes() + t2.to_bytes() + t3.to_bytes())
+
+        # Indexing & Negative Indexing
+        self.assertEqual(table[0], t1)
+        self.assertEqual(table[1], t2)
+        self.assertEqual(table[2], t3)
+        self.assertEqual(table[-1], t3)
+        self.assertEqual(table[-2], t2)
+        self.assertEqual(table[-3], t1)
+
+        # Index Out of Bounds
+        with self.assertRaises(IndexError):
+            _ = table[3]
+        with self.assertRaises(IndexError):
+            _ = table[-4]
+
+        # Slicing
+        self.assertEqual(table[0:2], (t1, t2))
+        self.assertEqual(table[1:], (t2, t3))
+        self.assertEqual(table[:], (t1, t2, t3))
+
+        # Iteration
+        self.assertEqual(list(table), [t1, t2, t3])
+
+        # Equality (__eq__)
+        table_same_bytes = TryTable(memoryview(table.to_bytes()))
+        self.assertEqual(table, table_same_bytes)
+        self.assertEqual(table, (t1, t2, t3))
+        self.assertEqual(table, [t1, t2, t3])
+
+        # Unequal cases
+        self.assertNotEqual(table, TryTable.from_tries([t1, t2]))
+        self.assertNotEqual(table, (t1, t2))
+        self.assertNotEqual(table, "not a sequence")
+
     def test_encoded_type_addr_pair(self) -> None:
         pair = EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](3), addr=0x100)
         with self.assertRaises(FrozenInstanceError):
@@ -910,7 +969,7 @@ class TestCodeItem(unittest.TestCase):
             outs_size=0,
             debug_info_off=NO_OFFSET,
             insns=memoryview(b"\x0e\x00"),  # return-void
-            tries=(),
+            tries=TryTable(),
             handlers=None,
         )
         with self.assertRaises(FrozenInstanceError):
@@ -940,7 +999,7 @@ class TestCodeItem(unittest.TestCase):
             outs_size=0,
             debug_info_off=NO_OFFSET,
             insns=memoryview(bytecode),
-            tries=(),
+            tries=TryTable(),
             handlers=None,
         )
         self.assertEqual(item_no_tries.insns_size, 2)
@@ -982,7 +1041,7 @@ class TestCodeItem(unittest.TestCase):
             outs_size=0,
             debug_info_off=NO_OFFSET,
             insns=memoryview(bytecode),
-            tries=(try_item,),
+            tries=TryTable.from_tries((try_item,)),
             handlers=handlers,
         )
 
@@ -1006,7 +1065,7 @@ class TestCodeItem(unittest.TestCase):
             outs_size=0,
             debug_info_off=NO_OFFSET,
             insns=memoryview(bytecode),
-            tries=(try_item,),
+            tries=TryTable.from_tries((try_item,)),
             handlers=handlers,
         )
 
@@ -1018,6 +1077,49 @@ class TestCodeItem(unittest.TestCase):
 
         parsed = CodeItem.from_buffer(raw)
         self.assertEqual(parsed, item)
+
+    def test_find_try_item(self) -> None:
+        # Empty tries
+        code_empty = CodeItem(
+            registers_size=1,
+            ins_size=0,
+            outs_size=0,
+            debug_info_off=NO_OFFSET,
+            insns=memoryview(b"\x00\x00"),
+            tries=TryTable(),
+            handlers=None,
+        )
+        self.assertIsNone(code_empty.find_try_item(10))
+
+        # Multiple tries
+        t1 = TryItem(start_addr=10, insn_count=5, handler_off=0)  # 10..15
+        t2 = TryItem(start_addr=20, insn_count=10, handler_off=4)  # 20..30
+        t3 = TryItem(start_addr=35, insn_count=5, handler_off=8)  # 35..40
+
+        code = CodeItem(
+            registers_size=1,
+            ins_size=0,
+            outs_size=0,
+            debug_info_off=NO_OFFSET,
+            insns=memoryview(b"\x00\x00"),
+            tries=TryTable.from_tries([t1, t2, t3]),
+            handlers=None,
+        )
+
+        # Lookups before, inside, gap, after
+        self.assertIsNone(code.find_try_item(5))
+        self.assertEqual(code.find_try_item(10), t1)
+        self.assertEqual(code.find_try_item(14), t1)
+        self.assertIsNone(code.find_try_item(15))
+        self.assertIsNone(code.find_try_item(18))
+        self.assertEqual(code.find_try_item(20), t2)
+        self.assertEqual(code.find_try_item(25), t2)
+        self.assertEqual(code.find_try_item(29), t2)
+        self.assertIsNone(code.find_try_item(30))
+        self.assertEqual(code.find_try_item(35), t3)
+        self.assertEqual(code.find_try_item(39), t3)
+        self.assertIsNone(code.find_try_item(40))
+        self.assertIsNone(code.find_try_item(100))
 
 
 class TestClassDataItem(unittest.TestCase):

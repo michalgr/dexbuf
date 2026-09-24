@@ -1,9 +1,11 @@
 """Tests for Android 12+ (v027+) VdexFile container reader and spec structures."""
 
+import io
 import os
 import struct
 import tempfile
 import unittest
+import zipfile
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -22,11 +24,13 @@ from dexbuf.items import (
 from dexbuf.types import Count, Offset
 from dexbuf.vdex import (
     VDEX_FILE_MAGIC,
+    VDEX_INVALID_MAGIC,
     VdexFile,
     VdexHeader,
     VdexSectionHeader,
     VdexSectionKind,
 )
+from dexbuf.zip import ZipArchive
 
 
 def create_minimal_dex_bytes() -> bytes:
@@ -123,6 +127,15 @@ def create_test_vdex(
         buf.extend(payload)
 
     return bytes(buf)
+
+
+def create_test_apk_bytes(entries: dict[str, bytes]) -> bytes:
+    """Helper to construct a ZIP archive binary buffer with given filename->data entries."""
+    bio = io.BytesIO()
+    with zipfile.ZipFile(bio, "w", compression=zipfile.ZIP_STORED) as zf:
+        for name, data in entries.items():
+            zf.writestr(name, data)
+    return bio.getvalue()
 
 
 class TestVdexFile(unittest.TestCase):
@@ -448,6 +461,12 @@ class TestVdexFile(unittest.TestCase):
             VdexFile(bad_magic_bytes)
         self.assertIn("Invalid VDEX file magic", str(ctx.exception))
 
+        # Invalid magic b"wdex" (kVdexInvalidMagic)
+        invalid_wdex_bytes = create_test_vdex([], magic=VDEX_INVALID_MAGIC)
+        with self.assertRaises(ValueError) as ctx:
+            VdexFile(invalid_wdex_bytes)
+        self.assertIn("marked invalid / incompletely written", str(ctx.exception))
+
         # Unsupported version
         bad_ver_bytes = create_test_vdex([], version=b"021\x00")
         with self.assertRaises(ValueError) as ctx:
@@ -492,6 +511,159 @@ class TestVdexFile(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             list(vdex_corrupt_size.iter_dex_data())
         self.assertIn("Invalid DEX file size 10", str(ctx.exception))
+
+    def test_section_presence_properties(self) -> None:
+        """Verify section presence properties (has_checksum_section, etc.)."""
+        # Section present and size > 0
+        vdex_full = VdexFile(
+            create_test_vdex(
+                [
+                    (VdexSectionKind.CHECKSUM, b"\x01\x00\x00\x00"),
+                    (VdexSectionKind.VERIFIER_DEPS, b"deps"),
+                    (VdexSectionKind.TYPE_LOOKUP_TABLE, b"table"),
+                ]
+            )
+        )
+        self.assertTrue(vdex_full.has_checksum_section)
+        self.assertTrue(vdex_full.has_verifier_deps_section)
+        self.assertTrue(vdex_full.has_type_lookup_table_section)
+
+        # Section empty (size == 0) or absent
+        vdex_empty_sec = VdexFile(
+            create_test_vdex(
+                [
+                    (VdexSectionKind.CHECKSUM, b""),
+                    (VdexSectionKind.VERIFIER_DEPS, b""),
+                ]
+            )
+        )
+        self.assertFalse(vdex_empty_sec.has_checksum_section)
+        self.assertFalse(vdex_empty_sec.has_verifier_deps_section)
+        self.assertFalse(vdex_empty_sec.has_type_lookup_table_section)
+
+    def test_computed_file_size_and_is_valid(self) -> None:
+        """Verify computed_file_size calculation and is_valid property."""
+        deps_data = b"verifier_deps_payload_12345"
+        vdex_bytes = create_test_vdex([(VdexSectionKind.VERIFIER_DEPS, deps_data)])
+        vdex = VdexFile(vdex_bytes)
+
+        expected_size = len(vdex_bytes)
+        self.assertEqual(vdex.computed_file_size, expected_size)
+        self.assertTrue(vdex.is_valid)
+
+        # Truncated buffer past header table
+        truncated_bytes = vdex_bytes[: expected_size - 5]
+        vdex_trunc = VdexFile(truncated_bytes)
+        self.assertEqual(vdex_trunc.computed_file_size, expected_size)
+        self.assertFalse(vdex_trunc.is_valid)
+
+    def test_verify_checksums_with_contained_dex(self) -> None:
+        """Verify verify_checksums when DEX files are present in VDEX."""
+        dex1 = create_minimal_dex_bytes()
+        # dex1 checksum in create_minimal_dex_bytes is 0x12345678
+        checksum_data = struct.pack("<I", 0x12345678)
+
+        vdex_bytes = create_test_vdex(
+            [
+                (VdexSectionKind.CHECKSUM, checksum_data),
+                (VdexSectionKind.DEX_FILE, dex1),
+            ]
+        )
+        vdex = VdexFile(vdex_bytes)
+
+        # Valid checksum verification
+        self.assertTrue(vdex.verify_checksums())
+
+        # Passing apk when DEX files are present raises ValueError
+        dummy_apk = ZipArchive(create_test_apk_bytes({"classes.dex": b"dummy"}))
+        with self.assertRaises(ValueError) as ctx:
+            vdex.verify_checksums(apk=dummy_apk)
+        self.assertIn("APK must be None", str(ctx.exception))
+
+        # Checksum mismatch
+        bad_checksum_vdex = VdexFile(
+            create_test_vdex(
+                [
+                    (VdexSectionKind.CHECKSUM, struct.pack("<I", 0x99999999)),
+                    (VdexSectionKind.DEX_FILE, dex1),
+                ]
+            )
+        )
+        self.assertFalse(bad_checksum_vdex.verify_checksums())
+
+        # Count mismatch (e.g. 2 checksums for 1 DEX file)
+        mismatch_count_vdex = VdexFile(
+            create_test_vdex(
+                [
+                    (VdexSectionKind.CHECKSUM, struct.pack("<2I", 0x12345678, 0x87654321)),
+                    (VdexSectionKind.DEX_FILE, dex1),
+                ]
+            )
+        )
+        self.assertFalse(mismatch_count_vdex.verify_checksums())
+
+    def test_verify_checksums_without_contained_dex(self) -> None:
+        """Verify verify_checksums when DEX files are NOT present in VDEX (using APK)."""
+        content1 = b"classes.dex content"
+        content2 = b"classes2.dex content"
+        apk_bytes = create_test_apk_bytes(
+            {
+                "classes.dex": content1,
+                "classes2.dex": content2,
+            }
+        )
+        apk = ZipArchive(apk_bytes)
+        crc1 = apk.getinfo("classes.dex").crc32
+        crc2 = apk.getinfo("classes2.dex").crc32
+
+        vdex = VdexFile(
+            create_test_vdex(
+                [
+                    (VdexSectionKind.CHECKSUM, struct.pack("<2I", crc1, crc2)),
+                    (VdexSectionKind.VERIFIER_DEPS, b"deps"),
+                ]
+            )
+        )
+
+        # apk=None when no DEX files present raises ValueError
+        with self.assertRaises(ValueError) as ctx:
+            vdex.verify_checksums(apk=None)
+        self.assertIn("APK must be provided", str(ctx.exception))
+
+        # Valid checksum match with APK
+        self.assertTrue(vdex.verify_checksums(apk=apk))
+
+        # Checksum mismatch
+        bad_crc_vdex = VdexFile(
+            create_test_vdex(
+                [
+                    (VdexSectionKind.CHECKSUM, struct.pack("<2I", crc1, 0xDEADBEEF)),
+                    (VdexSectionKind.VERIFIER_DEPS, b"deps"),
+                ]
+            )
+        )
+        self.assertFalse(bad_crc_vdex.verify_checksums(apk=apk))
+
+        # Missing expected multidex entry in APK
+        apk_missing = ZipArchive(create_test_apk_bytes({"classes.dex": content1}))
+        self.assertFalse(vdex.verify_checksums(apk=apk_missing))
+
+        # Extra multidex entry in APK (classes3.dex)
+        apk_extra = ZipArchive(
+            create_test_apk_bytes(
+                {
+                    "classes.dex": content1,
+                    "classes2.dex": content2,
+                    "classes3.dex": b"extra",
+                }
+            )
+        )
+        self.assertFalse(vdex.verify_checksums(apk=apk_extra))
+
+    def test_verify_checksums_missing_checksum_section(self) -> None:
+        """Verify verify_checksums returns False when CHECKSUM section is missing or empty."""
+        vdex = VdexFile(create_test_vdex([(VdexSectionKind.VERIFIER_DEPS, b"deps")]))
+        self.assertFalse(vdex.verify_checksums())
 
     def test_open_mmap_and_context_manager(self) -> None:
         """Verify open() with mmap and context manager lifecycle."""

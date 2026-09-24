@@ -296,9 +296,14 @@ class VdexFile(Sequence[VdexSectionHeader]):
     def number_of_dex_files(self) -> int:
         """Return count of DEX files based on CHECKSUM section size or iter_dex_data()."""
         sec = self.get_section(VdexSectionKind.CHECKSUM)
-        if sec is not None:
+        if sec is not None and sec.size > 0:
             return sec.size // 4
         return sum(1 for _ in self.iter_dex_data())
+
+    @property
+    def dex_files(self) -> tuple[DexFile, ...]:
+        """Return tuple of DexFile instances parsed from DEX_FILE section."""
+        return tuple(self.iter_dex_files())
 
     def iter_dex_data(self) -> Iterator[memoryview]:
         """Stream zero-copy memoryview slices for each contained DEX file on the fly
@@ -308,11 +313,23 @@ class VdexFile(Sequence[VdexSectionHeader]):
         if sec is None or sec.size == 0:
             return
 
+        checksum_sec = self.get_section(VdexSectionKind.CHECKSUM)
+        expected_count: int | None = None
+        if checksum_sec is not None and checksum_sec.size > 0:
+            expected_count = checksum_sec.size // 4
+
         dex_section_data = self.get_section_data(sec)
         sec_len = len(dex_section_data)
         pos = 0
+        count = 0
 
         while pos < sec_len:
+            if expected_count is not None and count >= expected_count:
+                break
+
+            if not any(dex_section_data[pos:]):
+                break
+
             if pos + 36 > sec_len:
                 raise ValueError("Truncated DEX header in DEX_FILE section")
 
@@ -323,6 +340,7 @@ class VdexFile(Sequence[VdexSectionHeader]):
                 )
 
             yield dex_section_data[pos : pos + file_size]
+            count += 1
 
             next_pos = pos + file_size
             pos = (next_pos + 3) & ~3
@@ -334,13 +352,17 @@ class VdexFile(Sequence[VdexSectionHeader]):
 
     def get_dex_file(self, index: int) -> DexFile:
         """Return DexFile for the index-th DEX file."""
+        if type(index) is not int:
+            raise TypeError(f"Index must be an integer, got {type(index).__name__}")
+
+        num = self.number_of_dex_files
         idx = index
         if idx < 0:
-            idx += self.number_of_dex_files
-        if idx < 0:
-            raise IndexError(f"DEX file index {index} out of range")
+            idx += num
+        if idx < 0 or idx >= num:
+            raise IndexError(f"DEX file index {index} out of range (total {num})")
 
         for i, dex_data in enumerate(self.iter_dex_data()):
             if i == idx:
                 return DexFile(dex_data)
-        raise IndexError(f"DEX file index {index} out of range")
+        raise IndexError(f"DEX file index {index} out of range (total {num})")

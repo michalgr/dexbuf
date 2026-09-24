@@ -68,6 +68,7 @@ class TestSanity(unittest.TestCase):
             "HiddenapiRestrictionFlag",
             "Idx",
             "Instruction",
+            "InstructionBuffer",
             "ItemType",
             "Literal",
             "LocalFileHeader",

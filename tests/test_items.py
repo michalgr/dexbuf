@@ -45,6 +45,7 @@ from dexbuf import (
     HiddenapiRestrictionFlag,
     Idx,
     Instruction,
+    InstructionBuffer,
     ItemType,
     MapItem,
     MapItemType,
@@ -1046,6 +1047,76 @@ class TestTryAndCatchHandlers(unittest.TestCase):
         self.assertNotEqual(parsed, "not a mapping")
 
 
+class TestInstructionBuffer(unittest.TestCase):
+    def test_instruction_buffer_empty(self) -> None:
+        buf = InstructionBuffer(b"")
+        self.assertEqual(len(buf), 0)
+        self.assertEqual(buf.code_units, 0)
+        self.assertEqual(buf.to_bytes(), b"")
+        self.assertEqual(list(buf), [])
+        self.assertEqual(buf.parse(), ())
+        self.assertEqual(buf.__slots__, ("_buffer",))
+
+    def test_instruction_buffer_indexing_and_iteration(self) -> None:
+        # nop (0x0000), return-void (0x000e) -> 2 code units = 4 bytes
+        bytecode = b"\x00\x00\x0e\x00"
+        buf = InstructionBuffer(bytecode)
+
+        self.assertEqual(len(buf), 2)
+        self.assertEqual(buf.code_units, 2)
+
+        # Indexing via [] and .at()
+        nop_insn = buf[0]
+        self.assertEqual(nop_insn, buf.at(0))
+        self.assertIsInstance(nop_insn, Instruction)
+        self.assertEqual(nop_insn.OPCODE, Opcode.NOP)
+
+        ret_insn = buf[1]
+        self.assertEqual(ret_insn, buf.at(1))
+        self.assertIsInstance(ret_insn, Instruction)
+        self.assertEqual(ret_insn.OPCODE, Opcode.RETURN_VOID)
+
+        # Negative indexing
+        self.assertEqual(buf[-1], ret_insn)
+        self.assertEqual(buf[-2], nop_insn)
+
+        # Out-of-bounds indexing
+        with self.assertRaises(IndexError):
+            _ = buf[2]
+        with self.assertRaises(IndexError):
+            _ = buf[-3]
+        with self.assertRaises(IndexError):
+            _ = buf[100]
+
+        # Iteration & parse()
+        iops = list(buf)
+        self.assertEqual(len(iops), 2)
+        self.assertEqual(iops[0], nop_insn)
+        self.assertEqual(iops[1], ret_insn)
+        self.assertEqual(buf.parse(), (nop_insn, ret_insn))
+
+    def test_instruction_buffer_to_bytes_and_buffer_protocol(self) -> None:
+        bytecode = b"\x0e\x00"
+        buf = InstructionBuffer(bytecode)
+
+        self.assertEqual(buf.to_bytes(), bytecode)
+        self.assertEqual(bytes(buf), bytecode)
+        self.assertEqual(memoryview(buf), memoryview(bytecode))
+
+    def test_instruction_buffer_equality(self) -> None:
+        bytecode = b"\x0e\x00"
+        buf1 = InstructionBuffer(bytecode)
+        buf2 = InstructionBuffer(bytearray(bytecode))
+        buf_diff = InstructionBuffer(b"\x00\x00")
+
+        self.assertEqual(buf1, buf2)
+        self.assertEqual(buf1, bytecode)
+        self.assertEqual(buf1, memoryview(bytecode))
+        self.assertNotEqual(buf1, buf_diff)
+        self.assertNotEqual(buf1, b"\x00\x00")
+        self.assertNotEqual(buf1, "not a buffer")
+
+
 class TestCodeItem(unittest.TestCase):
     def test_padding_and_struct(self) -> None:
         self.assertEqual(CodeItem.PADDING, 4)
@@ -1069,7 +1140,7 @@ class TestCodeItem(unittest.TestCase):
             ins_size=1,
             outs_size=0,
             debug_info_off=NO_OFFSET,
-            insns=memoryview(b"\x0e\x00"),  # return-void
+            insns=InstructionBuffer(b"\x0e\x00"),  # return-void
             tries=TryTable(),
             handlers=None,
         )
@@ -1099,7 +1170,7 @@ class TestCodeItem(unittest.TestCase):
             ins_size=0,
             outs_size=0,
             debug_info_off=NO_OFFSET,
-            insns=memoryview(bytecode),
+            insns=InstructionBuffer(bytecode),
             tries=TryTable(),
             handlers=None,
         )
@@ -1115,8 +1186,8 @@ class TestCodeItem(unittest.TestCase):
         parsed = CodeItem.from_cursor(cursor)
         self.assertIsNone(parsed.handlers)
 
-        # Confirm insns is a zero-copy memoryview slice
-        self.assertIsInstance(parsed.insns, memoryview)
+        # Confirm insns is an InstructionBuffer
+        self.assertIsInstance(parsed.insns, InstructionBuffer)
         self.assertEqual(bytes(parsed.insns), bytecode)
 
         # Lazy instruction parsing
@@ -1147,7 +1218,7 @@ class TestCodeItem(unittest.TestCase):
             ins_size=0,
             outs_size=0,
             debug_info_off=NO_OFFSET,
-            insns=memoryview(bytecode),
+            insns=InstructionBuffer(bytecode),
             tries=TryTable.from_tries((try_item,)),
             handlers=handlers,
         )
@@ -1174,7 +1245,7 @@ class TestCodeItem(unittest.TestCase):
             ins_size=0,
             outs_size=0,
             debug_info_off=NO_OFFSET,
-            insns=memoryview(bytecode),
+            insns=InstructionBuffer(bytecode),
             tries=TryTable.from_tries((try_item,)),
             handlers=handlers,
         )
@@ -1195,7 +1266,7 @@ class TestCodeItem(unittest.TestCase):
             ins_size=0,
             outs_size=0,
             debug_info_off=NO_OFFSET,
-            insns=memoryview(b"\x00\x00"),
+            insns=InstructionBuffer(b"\x00\x00"),
             tries=TryTable(),
             handlers=None,
         )
@@ -1217,7 +1288,7 @@ class TestCodeItem(unittest.TestCase):
             ins_size=0,
             outs_size=0,
             debug_info_off=NO_OFFSET,
-            insns=memoryview(b"\x00\x00"),
+            insns=InstructionBuffer(b"\x00\x00"),
             tries=TryTable.from_tries([t1, t2, t3]),
             handlers=handlers,
         )

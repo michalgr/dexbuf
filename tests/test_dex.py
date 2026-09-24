@@ -33,6 +33,7 @@ from dexbuf import (
     FieldIdItem,
     HeaderItem,
     Idx,
+    InstructionBuffer,
     ItemType,
     MapItem,
     MapList,
@@ -81,7 +82,7 @@ def create_sample_dex() -> bytes:
         ins_size=0,
         outs_size=0,
         debug_info_off=NO_OFFSET,
-        insns=memoryview(bytecode),
+        insns=InstructionBuffer(bytecode),
         tries=TryTable(),
     )
     code_item_bytes = code_item.to_bytes()

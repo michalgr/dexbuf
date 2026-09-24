@@ -728,6 +728,19 @@ class EncodedCatchHandler:
         return self.catch_all_addr
 
     @classmethod
+    def skip(cls, cursor: Cursor) -> None:
+        """Skip an EncodedCatchHandler in a Cursor without decoding objects.
+
+        See https://source.android.com/docs/core/runtime/dex-format#encoded-catch-handler
+        """
+        size = cursor.read_sleb128()
+        for _ in range(abs(size)):
+            cursor.skip_leb128()  # type_idx
+            cursor.skip_leb128()  # addr
+        if size <= 0:
+            cursor.skip_leb128()  # catch_all_addr
+
+    @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse an EncodedCatchHandler from a Cursor."""
         size = cursor.read_sleb128()
@@ -773,12 +786,7 @@ class EncodedCatchHandlerList(Mapping[int, EncodedCatchHandler]):
         start = cursor.tell()
         size = cursor.read_uleb128()
         for _ in range(size):
-            h_size = cursor.read_sleb128()
-            for _ in range(abs(h_size)):
-                cursor.skip_leb128()
-                cursor.skip_leb128()
-            if h_size <= 0:
-                cursor.skip_leb128()
+            EncodedCatchHandler.skip(cursor)
         end = cursor.tell()
         return cls(size=size, buffer=cursor._buffer[start:end])
 
@@ -806,12 +814,7 @@ class EncodedCatchHandlerList(Mapping[int, EncodedCatchHandler]):
         for _ in range(self.size):
             off = cursor.tell()
             yield off
-            h_size = cursor.read_sleb128()
-            for _ in range(abs(h_size)):
-                cursor.skip_leb128()
-                cursor.skip_leb128()
-            if h_size <= 0:
-                cursor.skip_leb128()
+            EncodedCatchHandler.skip(cursor)
 
     def to_bytes(self) -> bytes:
         """Encode this EncodedCatchHandlerList to raw DEX bytes."""

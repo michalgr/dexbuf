@@ -7,7 +7,7 @@ import struct
 from collections.abc import Buffer, Iterator
 from dataclasses import dataclass
 from types import TracebackType
-from typing import BinaryIO, ClassVar, Final, Self, overload
+from typing import BinaryIO, ClassVar, Final, Self
 
 from dexbuf.cursor import Cursor
 from dexbuf.dex import DexFile
@@ -250,32 +250,18 @@ class VdexFile:
 
         return self._buffer[sec_header.offset : sec_header.offset + sec_header.size]
 
-    @overload
-    def __getitem__(self, key: VdexSectionHeader | VdexSectionKind) -> memoryview: ...
-
-    @overload
-    def __getitem__(self, key: int) -> VdexSectionHeader: ...
-
-    def __getitem__(
-        self, key: VdexSectionHeader | VdexSectionKind | int
-    ) -> memoryview | VdexSectionHeader:
-        """Convenience accessor.
-
-        If key is VdexSectionHeader or VdexSectionKind, returns self.get_section_data(key).
-        If key is int, returns the O(1) i-th VdexSectionHeader (supports negative indices).
-        """
-        if isinstance(key, (VdexSectionHeader, VdexSectionKind)):
-            return self.get_section_data(key)
-        if isinstance(key, int):
-            num = self.header.number_of_sections
-            idx = key
-            if idx < 0:
-                idx += num
-            if idx < 0 or idx >= num:
-                raise IndexError(f"Section index {key} out of range (total {num})")
-            offset = VdexHeader.STRUCT.size + idx * VdexSectionHeader.STRUCT.size
-            return VdexSectionHeader.from_buffer(self._buffer, offset)
-        raise TypeError(f"Invalid key type: {type(key)}")
+    def __getitem__(self, index: int) -> VdexSectionHeader:
+        """Return the O(1) i-th VdexSectionHeader (supports negative indices)."""
+        if type(index) is not int:
+            raise TypeError(f"Index must be an integer, got {type(index).__name__}")
+        num = self.header.number_of_sections
+        idx = index
+        if idx < 0:
+            idx += num
+        if idx < 0 or idx >= num:
+            raise IndexError(f"Section index {index} out of range (total {num})")
+        offset = VdexHeader.STRUCT.size + idx * VdexSectionHeader.STRUCT.size
+        return VdexSectionHeader.from_buffer(self._buffer, offset)
 
     # DEX File Streaming & Interoperability
     @property

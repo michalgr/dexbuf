@@ -208,25 +208,34 @@ class TestVdexFile(unittest.TestCase):
         self.assertIsInstance(data_hdr, memoryview)
         self.assertEqual(bytes(data_hdr), deps_data)
 
-        # __getitem__ with VdexSectionKind / VdexSectionHeader
-        self.assertEqual(bytes(vdex[VdexSectionKind.VERIFIER_DEPS]), deps_data)
-        self.assertEqual(bytes(vdex[sec_hdr]), deps_data)
-
         # __getitem__ with int -> VdexSectionHeader O(1)
         sec_0 = vdex[0]
         self.assertIsInstance(sec_0, VdexSectionHeader)
         self.assertEqual(sec_0.kind, VdexSectionKind.VERIFIER_DEPS)
+        self.assertEqual(sec_0, sec_hdr)
 
         sec_neg1 = vdex[-1]
+        self.assertIsInstance(sec_neg1, VdexSectionHeader)
         self.assertEqual(sec_neg1.kind, VdexSectionKind.VERIFIER_DEPS)
+        self.assertEqual(sec_neg1, sec_hdr)
 
         # Out of bounds and invalid key types
         with self.assertRaises(IndexError):
             _ = vdex[1]
         with self.assertRaises(IndexError):
             _ = vdex[-2]
+
+        # Non-integer keys raise TypeError
         with self.assertRaises(TypeError):
-            _ = vdex[cast(Any, 3.14)]  # Invalid key type
+            _ = vdex[cast(Any, VdexSectionKind.VERIFIER_DEPS)]
+        with self.assertRaises(TypeError):
+            _ = vdex[cast(Any, sec_hdr)]
+        with self.assertRaises(TypeError):
+            _ = vdex[cast(Any, 3.14)]
+        with self.assertRaises(TypeError):
+            _ = vdex[cast(Any, "0")]
+        with self.assertRaises(TypeError):
+            _ = vdex[cast(Any, True)]
 
     def test_multi_dex_file_streaming_and_interoperability(self) -> None:
         """Verify multi-DEX file parsing, alignment, location checksums, and DexFile integration."""
@@ -363,12 +372,16 @@ class TestVdexFile(unittest.TestCase):
             # open with mmap=True
             with VdexFile.open(tmp_path, mmap=True) as vdex:
                 self.assertEqual(len(vdex), 1)
-                self.assertEqual(bytes(vdex[VdexSectionKind.VERIFIER_DEPS]), deps_data)
+                self.assertEqual(
+                    bytes(vdex.get_section_data(VdexSectionKind.VERIFIER_DEPS)), deps_data
+                )
 
             # open with mmap=False
             with VdexFile.open(tmp_path, mmap=False) as vdex:
                 self.assertEqual(len(vdex), 1)
-                self.assertEqual(bytes(vdex[VdexSectionKind.VERIFIER_DEPS]), deps_data)
+                self.assertEqual(
+                    bytes(vdex.get_section_data(VdexSectionKind.VERIFIER_DEPS)), deps_data
+                )
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)

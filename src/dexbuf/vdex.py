@@ -4,10 +4,10 @@ import enum
 import mmap as mmap_module
 import os
 import struct
-from collections.abc import Buffer, Iterator
+from collections.abc import Buffer, Iterator, Sequence
 from dataclasses import dataclass
 from types import TracebackType
-from typing import BinaryIO, ClassVar, Final, Self
+from typing import BinaryIO, ClassVar, Final, Self, overload
 
 from dexbuf.cursor import Cursor
 from dexbuf.dex import DexFile
@@ -105,7 +105,7 @@ class VdexSectionHeader:
         return cls.from_cursor(Cursor(buffer, offset))
 
 
-class VdexFile:
+class VdexFile(Sequence[VdexSectionHeader]):
     """Zero-copy, stateless Android 12+ (v027+) VDEX container file reader."""
 
     __slots__ = ("_buffer", "_file", "_mmap", "header")
@@ -250,11 +250,21 @@ class VdexFile:
 
         return self._buffer[sec_header.offset : sec_header.offset + sec_header.size]
 
-    def __getitem__(self, index: int) -> VdexSectionHeader:
-        """Return the O(1) i-th VdexSectionHeader (supports negative indices)."""
-        if type(index) is not int:
-            raise TypeError(f"Index must be an integer, got {type(index).__name__}")
+    @overload
+    def __getitem__(self, index: int) -> VdexSectionHeader: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[VdexSectionHeader, ...]: ...
+
+    def __getitem__(self, index: int | slice) -> VdexSectionHeader | tuple[VdexSectionHeader, ...]:
+        """Return the i-th VdexSectionHeader (supports negative indices and slices)."""
         num = self.header.number_of_sections
+        if isinstance(index, slice):
+            return tuple(self[i] for i in range(*index.indices(num)))
+
+        if type(index) is not int:
+            raise TypeError(f"Index must be an integer or slice, got {type(index).__name__}")
+
         idx = index
         if idx < 0:
             idx += num

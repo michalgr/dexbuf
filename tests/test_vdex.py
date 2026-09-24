@@ -4,6 +4,7 @@ import os
 import struct
 import tempfile
 import unittest
+from collections.abc import Sequence
 from typing import Any, cast
 
 from dexbuf.dex import DexFile
@@ -236,6 +237,46 @@ class TestVdexFile(unittest.TestCase):
             _ = vdex[cast(Any, "0")]
         with self.assertRaises(TypeError):
             _ = vdex[cast(Any, True)]
+
+    def test_sequence_protocol_and_slicing(self) -> None:
+        """Verify Sequence inheritance, slice access, and Sequence mixin methods."""
+        sections_def = [
+            (VdexSectionKind.CHECKSUM, b"\x78\x56\x34\x12"),
+            (VdexSectionKind.DEX_FILE, b"dex_payload_data"),
+            (VdexSectionKind.VERIFIER_DEPS, b"verifier_deps"),
+            (VdexSectionKind.TYPE_LOOKUP_TABLE, b"type_lookup"),
+        ]
+        vdex = VdexFile(create_test_vdex(sections_def))
+
+        # Sequence protocol inheritance
+        self.assertTrue(isinstance(vdex, Sequence))
+
+        # Slicing tests
+        sec_all = vdex[:]
+        self.assertIsInstance(sec_all, tuple)
+        self.assertEqual(len(sec_all), 4)
+        self.assertEqual([s.kind for s in sec_all], [k for k, _ in sections_def])
+
+        sec_slice = vdex[0:2]
+        self.assertIsInstance(sec_slice, tuple)
+        self.assertEqual(len(sec_slice), 2)
+        self.assertEqual(sec_slice[0].kind, VdexSectionKind.CHECKSUM)
+        self.assertEqual(sec_slice[1].kind, VdexSectionKind.DEX_FILE)
+
+        sec_rev = vdex[::-1]
+        self.assertIsInstance(sec_rev, tuple)
+        self.assertEqual([s.kind for s in sec_rev], [k for k, _ in reversed(sections_def)])
+
+        sec_oob = vdex[10:20]
+        self.assertEqual(sec_oob, ())
+
+        # Sequence mixin methods: reversed(), index(), count()
+        reversed_kinds = [s.kind for s in reversed(vdex)]
+        self.assertEqual(reversed_kinds, [k for k, _ in reversed(sections_def)])
+
+        target_sec = vdex[1]
+        self.assertEqual(vdex.index(target_sec), 1)
+        self.assertEqual(vdex.count(target_sec), 1)
 
     def test_multi_dex_file_streaming_and_interoperability(self) -> None:
         """Verify multi-DEX file parsing, alignment, location checksums, and DexFile integration."""

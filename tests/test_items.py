@@ -1190,17 +1190,14 @@ class TestCodeItem(unittest.TestCase):
         self.assertIsInstance(parsed.insns, InstructionBuffer)
         self.assertEqual(bytes(parsed.insns), bytecode)
 
-        # Lazy instruction parsing
-        iops = list(parsed.iter_iops())
+        # Lazy instruction parsing via insns
+        iops = list(parsed.insns)
         self.assertEqual(len(iops), 2)
         self.assertIsInstance(iops[0], Instruction)
         self.assertEqual(iops[0].OPCODE, Opcode.NOP)
         self.assertIsInstance(iops[1], Instruction)
         self.assertEqual(iops[1].OPCODE, Opcode.RETURN_VOID)
-
-        # Check __iter__ and parse_iops
-        self.assertEqual(list(parsed), iops)
-        self.assertEqual(parsed.parse_iops(), tuple(iops))
+        self.assertEqual(parsed.insns.parse(), tuple(iops))
 
     def test_tries_and_padding_even_insns_size(self) -> None:
         # 2 code units (even) -> no padding before tries

@@ -1075,17 +1075,6 @@ class CodeItem:
         """Parse a CodeItem from a buffer starting at offset."""
         return cls.from_cursor(Cursor(buffer, offset))
 
-    def iter_iops(self) -> Iterator[IOP]:
-        """Iterate over Dalvik instructions and payloads in bytecode lazily."""
-        return iter(self.insns)
-
-    def __iter__(self) -> Iterator[IOP]:
-        return iter(self.insns)
-
-    def parse_iops(self) -> tuple[IOP, ...]:
-        """Parse all Dalvik instructions and payloads into a tuple."""
-        return self.insns.parse()
-
     def to_bytes(self) -> bytes:
         """Encode this CodeItem to raw DEX bytes."""
         header_bytes = self.HEADER.pack(

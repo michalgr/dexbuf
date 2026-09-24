@@ -971,6 +971,19 @@ class TestTryAndCatchHandlers(unittest.TestCase):
         parsed2 = EncodedCatchHandler.from_cursor(Cursor(raw2))
         self.assertEqual(parsed2, handler_no_catch_all)
 
+        # Test skip advances cursor offset identically to from_cursor
+        c_skip1 = Cursor(raw1)
+        EncodedCatchHandler.skip(c_skip1)
+        c_parse1 = Cursor(raw1)
+        _ = EncodedCatchHandler.from_cursor(c_parse1)
+        self.assertEqual(c_skip1.tell(), c_parse1.tell())
+
+        c_skip2 = Cursor(raw2)
+        EncodedCatchHandler.skip(c_skip2)
+        c_parse2 = Cursor(raw2)
+        _ = EncodedCatchHandler.from_cursor(c_parse2)
+        self.assertEqual(c_skip2.tell(), c_parse2.tell())
+
     def test_encoded_catch_handler_list(self) -> None:
         h1 = EncodedCatchHandler(
             handlers=(EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](5), addr=0x50),),

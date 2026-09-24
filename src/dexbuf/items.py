@@ -768,17 +768,23 @@ class EncodedCatchHandlerList(Mapping[int, EncodedCatchHandler]):
     See https://source.android.com/docs/core/runtime/dex-format#encoded-catch-handler-list
     """
 
-    __slots__ = ("_buffer", "size")
+    __slots__ = ("_buffer",)
 
-    def __init__(self, size: int = 0, buffer: memoryview | None = None) -> None:
-        self.size: int = size
-        self._buffer: memoryview = buffer if buffer is not None else memoryview(b"")
+    def __init__(self, buffer: memoryview) -> None:
+        if not buffer:
+            raise ValueError("EncodedCatchHandlerList requires a non-empty buffer")
+        self._buffer: memoryview = buffer
+
+    @property
+    def size(self) -> int:
+        """Total number of encoded catch handlers in list."""
+        return Cursor(self._buffer).read_uleb128()
 
     @classmethod
     def from_handlers(cls, handlers: Sequence[EncodedCatchHandler]) -> Self:
         """Construct an EncodedCatchHandlerList from a sequence of EncodedCatchHandler objects."""
         encoded = encode_uleb128(len(handlers)) + b"".join(h.to_bytes() for h in handlers)
-        return cls(size=len(handlers), buffer=memoryview(encoded))
+        return cls(buffer=memoryview(encoded))
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -788,7 +794,7 @@ class EncodedCatchHandlerList(Mapping[int, EncodedCatchHandler]):
         for _ in range(size):
             EncodedCatchHandler.skip(cursor)
         end = cursor.tell()
-        return cls(size=size, buffer=cursor._buffer[start:end])
+        return cls(buffer=cursor._buffer[start:end])
 
     @classmethod
     def from_buffer(cls, buffer: Buffer, offset: Offset[Self] = NO_OFFSET) -> Self:
@@ -807,11 +813,9 @@ class EncodedCatchHandlerList(Mapping[int, EncodedCatchHandler]):
             raise KeyError(f"Failed to parse EncodedCatchHandler at offset {offset}") from e
 
     def __iter__(self) -> Iterator[int]:
-        if not self._buffer or self.size == 0:
-            return
         cursor = Cursor(self._buffer)
-        _ = cursor.read_uleb128()
-        for _ in range(self.size):
+        size = cursor.read_uleb128()
+        for _ in range(size):
             off = cursor.tell()
             yield off
             EncodedCatchHandler.skip(cursor)
@@ -822,7 +826,7 @@ class EncodedCatchHandlerList(Mapping[int, EncodedCatchHandler]):
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, EncodedCatchHandlerList):
-            return self.size == other.size and bytes(self._buffer) == bytes(other._buffer)
+            return bytes(self._buffer) == bytes(other._buffer)
         if isinstance(other, Mapping):
             return len(self) == len(other) and all(k in other and self[k] == other[k] for k in self)
         return False
@@ -924,7 +928,7 @@ class CodeItem:
     debug_info_off: Offset[DebugInfoItem]
     insns: memoryview
     tries: TryTable = dataclass_field(default_factory=TryTable)
-    handlers: EncodedCatchHandlerList = dataclass_field(default_factory=EncodedCatchHandlerList)
+    handlers: EncodedCatchHandlerList | None = dataclass_field(default=None)
 
     @property
     def insns_size(self) -> int:
@@ -953,10 +957,14 @@ class CodeItem:
 
     def get_catch_handler(self, try_item: TryItem) -> EncodedCatchHandler:
         """Get the EncodedCatchHandler for the given TryItem."""
+        if self.handlers is None:
+            raise ValueError("CodeItem has no catch handlers")
         return self.handlers[try_item.handler_off]
 
     def find_catch_handler(self, addr: int) -> EncodedCatchHandler | None:
         """Find the EncodedCatchHandler protecting bytecode address addr."""
+        if self.handlers is None:
+            return None
         item = self.find_try_item(addr)
         if item is None:
             return None
@@ -983,7 +991,7 @@ class CodeItem:
             handlers = EncodedCatchHandlerList.from_cursor(cursor)
         else:
             tries = TryTable()
-            handlers = EncodedCatchHandlerList()
+            handlers = None
 
         return cls(
             registers_size=registers_size,
@@ -1028,7 +1036,7 @@ class CodeItem:
         insns_bytes = bytes(self.insns)
         padding_bytes = b"\x00\x00" if (self.tries_size > 0 and self.insns_size % 2 != 0) else b""
         tries_bytes = self.tries.to_bytes()
-        handlers_bytes = self.handlers.to_bytes()
+        handlers_bytes = self.handlers.to_bytes() if self.handlers is not None else b""
 
         return header_bytes + insns_bytes + padding_bytes + tries_bytes + handlers_bytes
 

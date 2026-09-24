@@ -531,6 +531,7 @@ class TestDexFile(unittest.TestCase):
         code_item = self.dex.get_code_item(class_data.direct_methods[0].code_off)
         self.assertIsInstance(code_item, CodeItem)
         self.assertEqual(code_item.registers_size, 1)
+        self.assertIsNone(code_item.handlers)
 
         # get_type_list
         type_list = self.dex.get_type_list(proto.parameters_off)

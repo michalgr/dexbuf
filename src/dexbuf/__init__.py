@@ -75,6 +75,7 @@ from dexbuf.items import (
     TypeIdItem,
     TypeList,
 )
+from dexbuf.mutf8 import compute_mutf8_hash
 from dexbuf.types import (
     NO_INDEX,
     NO_OFFSET,
@@ -98,6 +99,8 @@ from dexbuf.vdex import (
     SUPPORTED_VDEX_VERSIONS,
     VDEX_FILE_MAGIC,
     VDEX_INVALID_MAGIC,
+    TypeLookupTable,
+    TypeLookupTableEntry,
     VdexFile,
     VdexHeader,
     VdexSectionHeader,
@@ -192,6 +195,8 @@ __all__ = [
     "TryTable",
     "TypeIdItem",
     "TypeList",
+    "TypeLookupTable",
+    "TypeLookupTableEntry",
     "ValueType",
     "VdexFile",
     "VdexHeader",
@@ -199,6 +204,7 @@ __all__ = [
     "VdexSectionKind",
     "ZipArchive",
     "__version__",
+    "compute_mutf8_hash",
     "descriptor_to_type_name",
     "format_class_flags",
     "format_field_flags",

@@ -8,12 +8,31 @@ from collections.abc import Buffer
 
 __all__ = [
     "compare_mutf8",
+    "compute_mutf8_hash",
     "count_mutf8_utf16_units",
     "decode_mutf8",
     "decode_mutf8_utf16_units",
     "encode_mutf8",
     "utf16_code_units",
 ]
+
+
+def compute_mutf8_hash(data: Buffer | str) -> int:
+    """Compute Modified UTF-8 (MUTF-8) hash code matching AOSP ComputeModifiedUtf8Hash.
+
+    Evaluates Java string hash code over non-null-terminated MUTF-8 bytes:
+    hash = sum(byte[i] * 31**(N-1-i)) mod 2**32
+
+    See https://source.android.com/docs/core/runtime/dex-format#mutf-8
+    """
+    if isinstance(data, str):
+        raw = encode_mutf8(data, null_terminated=False)
+    else:
+        raw = memoryview(data).cast("B")
+    h = 0
+    for b in raw:
+        h = ((h * 31) + b) & 0xFFFF_FFFF
+    return h
 
 
 def compare_mutf8(b1: Buffer, b2: Buffer) -> int:

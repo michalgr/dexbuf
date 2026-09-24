@@ -5,6 +5,7 @@ import unittest
 from dexbuf.cursor import Cursor
 from dexbuf.mutf8 import (
     compare_mutf8,
+    compute_mutf8_hash,
     count_mutf8_utf16_units,
     decode_mutf8,
     decode_mutf8_utf16_units,
@@ -14,6 +15,21 @@ from dexbuf.mutf8 import (
 
 
 class TestMUTF8(unittest.TestCase):
+    def test_compute_mutf8_hash(self) -> None:
+        """Test compute_mutf8_hash against known vectors."""
+        # 1. Ljava/lang/Object; vector
+        self.assertEqual(compute_mutf8_hash("Ljava/lang/Object;"), 0x5F790D9C)
+        self.assertEqual(compute_mutf8_hash(b"Ljava/lang/Object;"), 0x5F790D9C)
+
+        # 2. Empty string
+        self.assertEqual(compute_mutf8_hash(""), 0)
+        self.assertEqual(compute_mutf8_hash(b""), 0)
+
+        # 3. MUTF-8 string with embedded null U+0000 -> b"\xc0\x80"
+        hash_str = compute_mutf8_hash("\x00")
+        hash_buf = compute_mutf8_hash(b"\xc0\x80")
+        self.assertEqual(hash_str, hash_buf)
+
     def test_compare_mutf8(self) -> None:
         """Test compare_mutf8 across boundary cases for nulls and supplementary chars."""
         # 1. U+0000 vs ASCII 0x01

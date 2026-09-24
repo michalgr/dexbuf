@@ -1,0 +1,350 @@
+"""Zero-copy, stateless Android 12+ (v027+) VDEX container parser and specification structures."""
+
+import enum
+import mmap as mmap_module
+import os
+import struct
+from collections.abc import Buffer, Iterator
+from dataclasses import dataclass
+from types import TracebackType
+from typing import BinaryIO, ClassVar, Final, Self, overload
+
+from dexbuf.cursor import Cursor
+from dexbuf.dex import DexFile
+
+__all__ = [
+    "SUPPORTED_VDEX_VERSIONS",
+    "VDEX_FILE_MAGIC",
+    "VdexFile",
+    "VdexHeader",
+    "VdexSectionHeader",
+    "VdexSectionKind",
+]
+
+VDEX_FILE_MAGIC: Final[bytes] = b"vdex"
+SUPPORTED_VDEX_VERSIONS: Final[frozenset[str]] = frozenset({"027"})
+
+
+class VdexSectionKind(enum.IntEnum):
+    """Section kind enumeration for Android 12+ (v027+) VDEX files."""
+
+    CHECKSUM = 0
+    DEX_FILE = 1
+    VERIFIER_DEPS = 2
+    TYPE_LOOKUP_TABLE = 3
+
+
+@dataclass(slots=True, frozen=True)
+class VdexHeader:
+    """Header structure for Android 12+ (v027+) VDEX container files."""
+
+    STRUCT: ClassVar[struct.Struct] = struct.Struct("<4s4sI")
+
+    magic: bytes
+    version: str
+    number_of_sections: int
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse a VdexHeader from cursor."""
+        magic, version_bytes, number_of_sections = cursor.unpack(cls.STRUCT)
+
+        if magic != VDEX_FILE_MAGIC:
+            raise ValueError(
+                f"Invalid VDEX file magic: expected {VDEX_FILE_MAGIC!r}, got {magic!r}"
+            )
+
+        version = version_bytes.decode("ascii", errors="replace").rstrip("\x00")
+        if version not in SUPPORTED_VDEX_VERSIONS:
+            versions = sorted(SUPPORTED_VDEX_VERSIONS)
+            raise ValueError(
+                f"Unsupported VDEX version: expected one of {versions}, got {version!r}"
+            )
+
+        return cls(
+            magic=magic,
+            version=version,
+            number_of_sections=number_of_sections,
+        )
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: int = 0) -> Self:
+        """Parse a VdexHeader from buffer at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+
+@dataclass(slots=True, frozen=True)
+class VdexSectionHeader:
+    """Section header structure in Android 12+ (v027+) VDEX container table."""
+
+    STRUCT: ClassVar[struct.Struct] = struct.Struct("<3I")
+
+    kind: VdexSectionKind
+    offset: int
+    size: int
+
+    @classmethod
+    def from_cursor(cls, cursor: Cursor) -> Self:
+        """Parse a VdexSectionHeader from cursor."""
+        raw_kind, offset, size = cursor.unpack(cls.STRUCT)
+
+        try:
+            kind = VdexSectionKind(raw_kind)
+        except ValueError:
+            raise ValueError(f"Invalid VdexSectionKind value: {raw_kind}") from None
+
+        return cls(
+            kind=kind,
+            offset=offset,
+            size=size,
+        )
+
+    @classmethod
+    def from_buffer(cls, buffer: Buffer, offset: int = 0) -> Self:
+        """Parse a VdexSectionHeader from buffer at offset."""
+        return cls.from_cursor(Cursor(buffer, offset))
+
+
+class VdexFile:
+    """Zero-copy, stateless Android 12+ (v027+) VDEX container file reader."""
+
+    __slots__ = ("_buffer", "_file", "_mmap", "header")
+
+    def __init__(self, buffer: Buffer) -> None:
+        """Initialize VdexFile lazily.
+
+        Validates minimum size for VdexHeader, parses self.header, and validates that
+        the section header table bounds fit within buffer.
+        Does NOT pre-allocate cached lists or tuples of sections, checksums, or DEX offsets.
+        """
+        self._buffer: memoryview = memoryview(buffer).cast("B")
+        self._file: BinaryIO | None = None
+        self._mmap: mmap_module.mmap | None = None
+
+        if len(self._buffer) < VdexHeader.STRUCT.size:
+            expected = VdexHeader.STRUCT.size
+            raise ValueError(
+                f"Buffer too small for VdexHeader: expected at least {expected} bytes, "
+                f"got {len(self._buffer)}"
+            )
+
+        self.header: VdexHeader = VdexHeader.from_buffer(self._buffer, 0)
+
+        section_table_size = self.header.number_of_sections * VdexSectionHeader.STRUCT.size
+        required_size = VdexHeader.STRUCT.size + section_table_size
+        if len(self._buffer) < required_size:
+            raise ValueError(
+                f"Buffer too small for section header table: expected at least "
+                f"{required_size} bytes, got {len(self._buffer)}"
+            )
+
+    @classmethod
+    def open(cls, path: str | os.PathLike[str], *, mmap: bool = True) -> Self:
+        """Open a VDEX file from disk with optional memory-mapping."""
+        if mmap:
+            f = open(path, "rb")
+            try:
+                mm = mmap_module.mmap(f.fileno(), 0, access=mmap_module.ACCESS_READ)
+            except Exception:
+                f.close()
+                raise
+            vdex = cls(mm)
+            vdex._file = f
+            vdex._mmap = mm
+            return vdex
+        else:
+            with open(path, "rb") as f:
+                data = f.read()
+            return cls(data)
+
+    def close(self) -> None:
+        """Close underlying file or memory-mapping resources if opened via open()."""
+        if self._mmap is not None:
+            if hasattr(self, "_buffer"):
+                try:
+                    self._buffer.release()
+                except BufferError:
+                    pass
+            self._mmap.close()
+            self._mmap = None
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        self.close()
+
+    # Section Streaming & Inspection
+    def iter_sections(self) -> Iterator[VdexSectionHeader]:
+        """Stream VdexSectionHeader instances lazily on the fly using Cursor."""
+        cursor = Cursor(self._buffer, VdexHeader.STRUCT.size)
+        for _ in range(self.header.number_of_sections):
+            yield VdexSectionHeader.from_cursor(cursor)
+
+    def infolist(self) -> list[VdexSectionHeader]:
+        """Return list of all section headers (mirrors ZipArchive.infolist())."""
+        return list(self.iter_sections())
+
+    def sections(self) -> list[VdexSectionHeader]:
+        """Alias for infolist()."""
+        return self.infolist()
+
+    def getinfo(self, kind: VdexSectionKind) -> VdexSectionHeader:
+        """Return VdexSectionHeader matching kind, or raise KeyError if missing."""
+        sec = self.get_section(kind)
+        if sec is None:
+            raise KeyError(f"Section of kind {kind!r} not found in VDEX file")
+        return sec
+
+    def get_section(self, kind: VdexSectionKind) -> VdexSectionHeader | None:
+        """Return VdexSectionHeader matching kind, or None if missing."""
+        for section in self.iter_sections():
+            if section.kind == kind:
+                return section
+        return None
+
+    def __contains__(self, kind: object) -> bool:
+        """Return True if section of kind exists."""
+        if isinstance(kind, (VdexSectionKind, int)):
+            return any(s.kind == kind for s in self.iter_sections())
+        if isinstance(kind, VdexSectionHeader):
+            return any(s == kind for s in self.iter_sections())
+        return False
+
+    def __len__(self) -> int:
+        """Return number of sections (self.header.number_of_sections)."""
+        return self.header.number_of_sections
+
+    def __iter__(self) -> Iterator[VdexSectionHeader]:
+        """Iterate over section headers (yields VdexSectionHeader)."""
+        return self.iter_sections()
+
+    # Section Data Retrieval (Zero-copy slice)
+    def get_section_data(self, section: VdexSectionHeader | VdexSectionKind) -> memoryview:
+        """Return a zero-copy memoryview slice of the given section's payload.
+
+        Accepts either a VdexSectionHeader or VdexSectionKind.
+        Raises KeyError if VdexSectionKind is not present.
+        Raises ValueError if section payload extends past the buffer end.
+        """
+        if isinstance(section, VdexSectionKind):
+            sec_header = self.getinfo(section)
+        elif isinstance(section, VdexSectionHeader):
+            sec_header = section
+        else:
+            raise TypeError(f"Expected VdexSectionHeader or VdexSectionKind, got {type(section)}")
+
+        if sec_header.offset < 0 or sec_header.offset + sec_header.size > len(self._buffer):
+            raise ValueError(
+                f"Section bounds [{sec_header.offset}, {sec_header.offset + sec_header.size}] "
+                f"extend past buffer length {len(self._buffer)}"
+            )
+
+        return self._buffer[sec_header.offset : sec_header.offset + sec_header.size]
+
+    @overload
+    def __getitem__(self, key: VdexSectionHeader | VdexSectionKind) -> memoryview: ...
+
+    @overload
+    def __getitem__(self, key: int) -> VdexSectionHeader: ...
+
+    def __getitem__(
+        self, key: VdexSectionHeader | VdexSectionKind | int
+    ) -> memoryview | VdexSectionHeader:
+        """Convenience accessor.
+
+        If key is VdexSectionHeader or VdexSectionKind, returns self.get_section_data(key).
+        If key is int, returns the O(1) i-th VdexSectionHeader (supports negative indices).
+        """
+        if isinstance(key, (VdexSectionHeader, VdexSectionKind)):
+            return self.get_section_data(key)
+        if isinstance(key, int):
+            num = self.header.number_of_sections
+            idx = key
+            if idx < 0:
+                idx += num
+            if idx < 0 or idx >= num:
+                raise IndexError(f"Section index {key} out of range (total {num})")
+            offset = VdexHeader.STRUCT.size + idx * VdexSectionHeader.STRUCT.size
+            return VdexSectionHeader.from_buffer(self._buffer, offset)
+        raise TypeError(f"Invalid key type: {type(key)}")
+
+    # DEX File Streaming & Interoperability
+    @property
+    def has_dex_section(self) -> bool:
+        """Return True if DEX_FILE section is present and non-empty."""
+        sec = self.get_section(VdexSectionKind.DEX_FILE)
+        return sec is not None and sec.size > 0
+
+    @property
+    def checksums(self) -> tuple[int, ...]:
+        """Return tuple of uint32 location checksums evaluated on demand from CHECKSUM section."""
+        sec = self.get_section(VdexSectionKind.CHECKSUM)
+        if sec is None or sec.size == 0:
+            return ()
+        data = self.get_section_data(sec)
+        count = len(data) // 4
+        if count == 0:
+            return ()
+        return struct.unpack_from(f"<{count}I", data, 0)
+
+    @property
+    def number_of_dex_files(self) -> int:
+        """Return count of DEX files based on CHECKSUM section size or iter_dex_data()."""
+        sec = self.get_section(VdexSectionKind.CHECKSUM)
+        if sec is not None:
+            return sec.size // 4
+        return sum(1 for _ in self.iter_dex_data())
+
+    def iter_dex_data(self) -> Iterator[memoryview]:
+        """Stream zero-copy memoryview slices for each contained DEX file on the fly
+        by reading file_size from offset 32 of each DEX header and advancing with 4-byte alignment.
+        """
+        sec = self.get_section(VdexSectionKind.DEX_FILE)
+        if sec is None or sec.size == 0:
+            return
+
+        dex_section_data = self.get_section_data(sec)
+        sec_len = len(dex_section_data)
+        pos = 0
+
+        while pos < sec_len:
+            if pos + 36 > sec_len:
+                raise ValueError("Truncated DEX header in DEX_FILE section")
+
+            file_size = struct.unpack_from("<I", dex_section_data, pos + 32)[0]
+            if file_size < 112 or pos + file_size > sec_len:
+                raise ValueError(
+                    f"Invalid DEX file size {file_size} at relative offset {pos} in DEX section"
+                )
+
+            yield dex_section_data[pos : pos + file_size]
+
+            next_pos = pos + file_size
+            pos = (next_pos + 3) & ~3
+
+    def iter_dex_files(self) -> Iterator[DexFile]:
+        """Yield DexFile instances for each DEX file on the fly."""
+        for data in self.iter_dex_data():
+            yield DexFile(data)
+
+    def get_dex_file(self, index: int) -> DexFile:
+        """Return DexFile for the index-th DEX file."""
+        idx = index
+        if idx < 0:
+            idx += self.number_of_dex_files
+        if idx < 0:
+            raise IndexError(f"DEX file index {index} out of range")
+
+        for i, dex_data in enumerate(self.iter_dex_data()):
+            if i == idx:
+                return DexFile(dex_data)
+        raise IndexError(f"DEX file index {index} out of range")

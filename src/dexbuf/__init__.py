@@ -94,6 +94,14 @@ from dexbuf.value import (
     EncodedValue,
     ValueType,
 )
+from dexbuf.vdex import (
+    SUPPORTED_VDEX_VERSIONS,
+    VDEX_FILE_MAGIC,
+    VdexFile,
+    VdexHeader,
+    VdexSectionHeader,
+    VdexSectionKind,
+)
 from dexbuf.zip import (
     CentralDirectoryHeader,
     EndOfCentralDirectoryRecord,
@@ -116,6 +124,8 @@ __all__ = [
     "NO_OFFSET",
     "REVERSE_ENDIAN_CONSTANT",
     "SUPPORTED_DEX_VERSIONS",
+    "SUPPORTED_VDEX_VERSIONS",
+    "VDEX_FILE_MAGIC",
     "AccessFlags",
     "AnnotationElement",
     "AnnotationItem",
@@ -181,6 +191,10 @@ __all__ = [
     "TypeIdItem",
     "TypeList",
     "ValueType",
+    "VdexFile",
+    "VdexHeader",
+    "VdexSectionHeader",
+    "VdexSectionKind",
     "ZipArchive",
     "__version__",
     "descriptor_to_type_name",

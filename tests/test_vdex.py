@@ -12,16 +12,19 @@ from typing import Any, cast
 from dexbuf.dex import DexFile
 from dexbuf.items import (
     DEX_FILE_MAGIC,
+    ENDIAN_CONSTANT,
     ClassDefItem,
     FieldIdItem,
     HeaderItem,
     MapList,
     MethodIdItem,
     ProtoIdItem,
+    StringDataItem,
     StringIdItem,
     TypeIdItem,
 )
-from dexbuf.types import Count, Offset
+from dexbuf.type_lookup import TypeLookupTable
+from dexbuf.types import NO_INDEX, NO_OFFSET, Count, Idx, Offset
 from dexbuf.vdex import (
     VDEX_FILE_MAGIC,
     VDEX_INVALID_MAGIC,
@@ -126,6 +129,87 @@ def create_test_vdex(
     for _, payload in sections:
         buf.extend(payload)
 
+    return bytes(buf)
+
+
+def create_sample_dex_bytes() -> bytes:
+    """Helper to construct a valid DEX buffer with 1 class definition LTestClass;."""
+    header_size = 0x70
+    strings = ["LTestClass;", "Ljava/lang/Object;"]
+    string_data_bytes = bytearray()
+    string_data_offsets: list[int] = []
+
+    type_ids_size = len(strings)
+    class_defs_size = 1
+
+    data_start_off = header_size + 4 * len(strings) + 4 * type_ids_size + 32 * class_defs_size
+    data_off = data_start_off
+
+    for s in strings:
+        item = StringDataItem.from_str(s)
+        string_data_offsets.append(data_off)
+        b = item.to_bytes()
+        string_data_bytes.extend(b)
+        data_off += len(b)
+
+    string_ids_off = header_size
+    string_ids_bytes = b"".join(
+        StringIdItem(string_data_off=Offset[StringDataItem](off)).to_bytes()
+        for off in string_data_offsets
+    )
+
+    type_ids_off = string_ids_off + len(string_ids_bytes)
+    type_ids = [TypeIdItem(descriptor_idx=Idx[StringIdItem](i)) for i in range(len(strings))]
+    type_ids_bytes = b"".join(t.to_bytes() for t in type_ids)
+
+    class_defs_off = type_ids_off + len(type_ids_bytes)
+    class_defs = [
+        ClassDefItem(
+            class_idx=Idx[TypeIdItem](0),
+            access_flags=0x0001,
+            superclass_idx=Idx[TypeIdItem](1),
+            interfaces_off=NO_OFFSET,
+            source_file_idx=NO_INDEX,
+            annotations_off=NO_OFFSET,
+            class_data_off=NO_OFFSET,
+            static_values_off=NO_OFFSET,
+        )
+    ]
+    class_defs_bytes = b"".join(cd.to_bytes() for cd in class_defs)
+
+    total_file_size = data_off
+
+    header = HeaderItem(
+        magic=DEX_FILE_MAGIC,
+        checksum=0,
+        signature=b"\x00" * 20,
+        file_size=total_file_size,
+        header_size=header_size,
+        endian_tag=ENDIAN_CONSTANT,
+        link_size=0,
+        link_off=NO_OFFSET,
+        map_off=NO_OFFSET,
+        string_ids_size=Count[StringIdItem](len(strings)),
+        string_ids_off=Offset[StringIdItem](string_ids_off),
+        type_ids_size=Count[TypeIdItem](type_ids_size),
+        type_ids_off=Offset[TypeIdItem](type_ids_off),
+        proto_ids_size=Count[ProtoIdItem](0),
+        proto_ids_off=NO_OFFSET,
+        field_ids_size=Count[FieldIdItem](0),
+        field_ids_off=NO_OFFSET,
+        method_ids_size=Count[MethodIdItem](0),
+        method_ids_off=NO_OFFSET,
+        class_defs_size=Count[ClassDefItem](class_defs_size),
+        class_defs_off=Offset[ClassDefItem](class_defs_off),
+        data_size=total_file_size - data_start_off,
+        data_off=Offset[Any](data_start_off),
+    )
+
+    buf = bytearray(header.to_bytes())
+    buf.extend(string_ids_bytes)
+    buf.extend(type_ids_bytes)
+    buf.extend(class_defs_bytes)
+    buf.extend(string_data_bytes)
     return bytes(buf)
 
 
@@ -664,6 +748,116 @@ class TestVdexFile(unittest.TestCase):
         """Verify verify_checksums returns False when CHECKSUM section is missing or empty."""
         vdex = VdexFile(create_test_vdex([(VdexSectionKind.VERIFIER_DEPS, b"deps")]))
         self.assertFalse(vdex.verify_checksums())
+
+    def test_iter_type_lookup_table_data_and_get_type_lookup_table(self) -> None:
+        """Verify iter_type_lookup_table_data and get_type_lookup_table integration."""
+        sample_dex_bytes = create_sample_dex_bytes()
+        sample_dex = DexFile(sample_dex_bytes)
+        t1 = TypeLookupTable.create(sample_dex)
+        t2 = TypeLookupTable.create(sample_dex)
+
+        # Build TYPE_LOOKUP_TABLE section buffer: uint32_t size1 + t1.raw_data +
+        # uint32_t size2 + t2.raw_data
+        sec_payload = bytearray()
+        sec_payload.extend(struct.pack("<I", len(t1.raw_data)))
+        sec_payload.extend(t1.raw_data)
+        sec_payload.extend(struct.pack("<I", len(t2.raw_data)))
+        sec_payload.extend(t2.raw_data)
+
+        # Build DEX section with 2 DEX files
+        dex_sec = bytearray(sample_dex_bytes)
+        while len(dex_sec) % 4 != 0:
+            dex_sec.append(0)
+        dex_sec.extend(sample_dex_bytes)
+
+        checksums = struct.pack("<2I", sample_dex.header.checksum, sample_dex.header.checksum)
+
+        vdex = VdexFile(
+            create_test_vdex(
+                [
+                    (VdexSectionKind.CHECKSUM, checksums),
+                    (VdexSectionKind.DEX_FILE, bytes(dex_sec)),
+                    (VdexSectionKind.TYPE_LOOKUP_TABLE, bytes(sec_payload)),
+                ]
+            )
+        )
+
+        self.assertTrue(vdex.has_type_lookup_table_section)
+
+        # iter_type_lookup_table_data
+        tables_data = list(vdex.iter_type_lookup_table_data())
+        self.assertEqual(len(tables_data), 2)
+        self.assertEqual(bytes(tables_data[0]), bytes(t1.raw_data))
+        self.assertEqual(bytes(tables_data[1]), bytes(t2.raw_data))
+
+        # get_type_lookup_table with implicit dex_buffer
+        lookup_table_0 = vdex.get_type_lookup_table(0)
+        self.assertIsInstance(lookup_table_0, TypeLookupTable)
+        assert lookup_table_0 is not None
+        self.assertEqual(lookup_table_0.lookup("LTestClass;"), 0)
+
+        lookup_table_1 = vdex.get_type_lookup_table(1)
+        self.assertIsInstance(lookup_table_1, TypeLookupTable)
+        assert lookup_table_1 is not None
+        self.assertEqual(lookup_table_1.lookup("LTestClass;"), 0)
+
+        # Negative index
+        lookup_table_neg = vdex.get_type_lookup_table(-1)
+        self.assertIsInstance(lookup_table_neg, TypeLookupTable)
+
+        # Explicit dex_buffer
+        lookup_table_exp = vdex.get_type_lookup_table(0, dex_buffer=sample_dex_bytes)
+        self.assertIsInstance(lookup_table_exp, TypeLookupTable)
+        assert lookup_table_exp is not None
+        self.assertEqual(lookup_table_exp.lookup("LTestClass;"), 0)
+
+    def test_type_lookup_table_absent_and_error_handling(self) -> None:
+        """Verify get_type_lookup_table when section is absent or on invalid parameters."""
+        sample_dex_bytes = create_sample_dex_bytes()
+
+        # Absent TYPE_LOOKUP_TABLE section
+        vdex_no_lookup = VdexFile(create_test_vdex([(VdexSectionKind.DEX_FILE, sample_dex_bytes)]))
+        self.assertFalse(vdex_no_lookup.has_type_lookup_table_section)
+        self.assertIsNone(vdex_no_lookup.get_type_lookup_table(0))
+
+        # TYPE_LOOKUP_TABLE present, but no DEX_FILE section and dex_buffer=None -> ValueError
+        t = TypeLookupTable.create(DexFile(sample_dex_bytes))
+        sec_payload = struct.pack("<I", len(t.raw_data)) + bytes(t.raw_data)
+        checksum_data = struct.pack("<I", 0x12345678)
+        vdex_no_dex = VdexFile(
+            create_test_vdex(
+                [
+                    (VdexSectionKind.CHECKSUM, checksum_data),
+                    (VdexSectionKind.TYPE_LOOKUP_TABLE, sec_payload),
+                ]
+            )
+        )
+        with self.assertRaises(ValueError) as ctx:
+            vdex_no_dex.get_type_lookup_table(0, dex_buffer=None)
+        self.assertIn("dex_buffer must be provided", str(ctx.exception))
+
+        # Providing dex_buffer explicitly when no DEX_FILE section -> works!
+        t_explicit = vdex_no_dex.get_type_lookup_table(0, dex_buffer=sample_dex_bytes)
+        self.assertIsInstance(t_explicit, TypeLookupTable)
+        assert t_explicit is not None
+        self.assertEqual(t_explicit.lookup("LTestClass;"), 0)
+
+        # TypeError for non-int index
+        with self.assertRaises(TypeError):
+            vdex_no_lookup.get_type_lookup_table(cast(Any, "0"))
+
+        # IndexError for out of bounds
+        with self.assertRaises(IndexError):
+            vdex_no_dex.get_type_lookup_table(1)
+
+        # Truncated table size in TYPE_LOOKUP_TABLE section
+        truncated_table_sec = struct.pack("<I", 100)  # says size 100, but buffer ends
+        vdex_trunc = VdexFile(
+            create_test_vdex([(VdexSectionKind.TYPE_LOOKUP_TABLE, truncated_table_sec)])
+        )
+        with self.assertRaises(ValueError) as ctx:
+            list(vdex_trunc.iter_type_lookup_table_data())
+        self.assertIn("Invalid table size", str(ctx.exception))
 
     def test_open_mmap_and_context_manager(self) -> None:
         """Verify open() with mmap and context manager lifecycle."""

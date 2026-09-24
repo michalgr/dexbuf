@@ -11,12 +11,15 @@ from typing import BinaryIO, ClassVar, Final, Self, overload
 
 from dexbuf.cursor import Cursor
 from dexbuf.dex import DexFile
+from dexbuf.type_lookup import TypeLookupTable, TypeLookupTableEntry
 from dexbuf.zip import ZipArchive
 
 __all__ = [
     "SUPPORTED_VDEX_VERSIONS",
     "VDEX_FILE_MAGIC",
     "VDEX_INVALID_MAGIC",
+    "TypeLookupTable",
+    "TypeLookupTableEntry",
     "VdexFile",
     "VdexHeader",
     "VdexSectionHeader",
@@ -408,6 +411,75 @@ class VdexFile(Sequence[VdexSectionHeader]):
             if i == idx:
                 return DexFile(dex_data)
         raise IndexError(f"DEX file index {index} out of range (total {num})")
+
+    # TypeLookupTable Integration
+    def iter_type_lookup_table_data(self) -> Iterator[memoryview]:
+        """Stream raw table slices for each DEX file from TYPE_LOOKUP_TABLE section on the fly."""
+        sec = self.get_section(VdexSectionKind.TYPE_LOOKUP_TABLE)
+        if sec is None or sec.size == 0:
+            return
+
+        table_sec_data = self.get_section_data(sec)
+        sec_len = len(table_sec_data)
+        pos = 0
+
+        checksum_sec = self.get_section(VdexSectionKind.CHECKSUM)
+        expected_count: int | None = None
+        if checksum_sec is not None and checksum_sec.size > 0:
+            expected_count = checksum_sec.size // 4
+
+        count = 0
+        while pos < sec_len:
+            if expected_count is not None and count >= expected_count:
+                break
+
+            if pos + 4 > sec_len:
+                raise ValueError("Truncated table size in TYPE_LOOKUP_TABLE section")
+
+            table_size = struct.unpack_from("<I", table_sec_data, pos)[0]
+            pos += 4
+
+            if pos + table_size > sec_len:
+                raise ValueError(
+                    f"Invalid table size {table_size} at offset {pos - 4} "
+                    "in TYPE_LOOKUP_TABLE section"
+                )
+
+            yield table_sec_data[pos : pos + table_size]
+            pos += table_size
+            count += 1
+
+    def get_type_lookup_table(
+        self, dex_index: int, dex_buffer: Buffer | None = None
+    ) -> TypeLookupTable | None:
+        """Return TypeLookupTable for the dex_index-th DEX file, or None if absent."""
+        if type(dex_index) is not int:
+            raise TypeError(f"Index must be an integer, got {type(dex_index).__name__}")
+
+        if not self.has_type_lookup_table_section:
+            return None
+
+        num = self.number_of_dex_files
+        idx = dex_index
+        if idx < 0:
+            idx += num
+        if idx < 0 or idx >= num:
+            raise IndexError(f"DEX file index {dex_index} out of range (total {num})")
+
+        tables = list(self.iter_type_lookup_table_data())
+        if idx >= len(tables):
+            return None
+
+        raw_table_data = tables[idx]
+
+        if dex_buffer is None:
+            if self.has_dex_section:
+                dex_file = self.get_dex_file(idx)
+                dex_buffer = dex_file._buffer
+            else:
+                raise ValueError("dex_buffer must be provided when VDEX has no DEX_FILE section")
+
+        return TypeLookupTable(dex_buffer, raw_table_data)
 
     def verify_checksums(self, apk: ZipArchive | None = None) -> bool:
         """Verify DEX checksums against the CHECKSUM section.

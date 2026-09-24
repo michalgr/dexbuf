@@ -4,10 +4,12 @@ See https://source.android.com/docs/core/runtime/dex-format
 """
 
 import hashlib
+import mmap as mmap_module
 import os
 import zlib
 from collections.abc import Buffer, Iterator, Sequence
-from typing import Any, Self, overload
+from types import TracebackType
+from typing import Any, BinaryIO, Self, overload
 
 from dexbuf.items import (
     REVERSE_ENDIAN_CONSTANT,
@@ -103,9 +105,18 @@ class DexFile:
 
     def __init__(self, buffer: Buffer, *, verify: bool = True) -> None:
         self._buffer: memoryview = memoryview(buffer)
-        self.header: HeaderItem = HeaderItem.from_buffer(self._buffer, Offset[HeaderItem](0))
-        if verify:
-            self._verify_header()
+        self._file: BinaryIO | None = None
+        self._mmap: mmap_module.mmap | None = None
+        try:
+            self.header: HeaderItem = HeaderItem.from_buffer(self._buffer, Offset[HeaderItem](0))
+            if verify:
+                self._verify_header()
+        except Exception:
+            try:
+                self._buffer.release()
+            except BufferError:
+                pass
+            raise
         self._map_list: MapList | None = None
 
         self.string_ids: TableSequence[StringIdItem] = TableSequence(
@@ -314,8 +325,58 @@ class DexFile:
         return EncodedArrayItem.from_buffer(self._buffer, offset).value
 
     @classmethod
-    def open(cls, path: str | os.PathLike[str], *, verify: bool = True) -> Self:
-        """Open a DEX file from filesystem."""
-        with open(path, "rb") as f:
-            data = f.read()
-        return cls(data, verify=verify)
+    def open(
+        cls,
+        path: str | os.PathLike[str],
+        *,
+        verify: bool = True,
+        mmap: bool = True,
+    ) -> Self:
+        """Open a DEX file from disk with optional memory-mapping."""
+        if mmap:
+            f = open(path, "rb")
+            try:
+                mm = mmap_module.mmap(f.fileno(), 0, access=mmap_module.ACCESS_READ)
+            except Exception:
+                f.close()
+                raise
+            try:
+                dex = cls(mm, verify=verify)
+            except Exception:
+                try:
+                    mm.close()
+                except BufferError:
+                    pass
+                f.close()
+                raise
+            dex._file = f
+            dex._mmap = mm
+            return dex
+        else:
+            with open(path, "rb") as f:
+                data = f.read()
+            return cls(data, verify=verify)
+
+    def close(self) -> None:
+        """Close underlying file or memory-mapping resources if opened via open()."""
+        if self._mmap is not None:
+            try:
+                self._buffer.release()
+            except BufferError:
+                pass
+            self._mmap.close()
+            self._mmap = None
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        self.close()

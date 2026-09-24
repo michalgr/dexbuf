@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import zlib
 from typing import Any
+from unittest.mock import patch
 
 from dexbuf import (
     DEX_FILE_MAGIC,
@@ -697,16 +698,96 @@ class TestDexFile(unittest.TestCase):
         with self.assertRaises(IndexError):
             seq.get(Idx[StringIdItem](-1))
 
-    def test_open_convenience_method(self) -> None:
-        """Verify DexFile.open reads DEX file from filesystem."""
+    def test_open_mmap_true(self) -> None:
+        """Verify DexFile.open with mmap=True memory-maps the DEX file."""
         with tempfile.NamedTemporaryFile(suffix=".dex", delete=True) as tmp:
             tmp.write(self.dex_bytes)
             tmp.flush()
 
-            opened_dex = DexFile.open(tmp.name)
+            opened_dex = DexFile.open(tmp.name, mmap=True)
+            self.assertIsNotNone(opened_dex._mmap)
+            self.assertIsNotNone(opened_dex._file)
             self.assertTrue(opened_dex.verify_checksum())
             self.assertTrue(opened_dex.verify_signature())
             self.assertEqual(opened_dex.get_string(Idx[StringIdItem](0)), "I")
+
+            opened_dex.close()
+            self.assertIsNone(opened_dex._mmap)
+            self.assertIsNone(opened_dex._file)
+
+    def test_open_mmap_false(self) -> None:
+        """Verify DexFile.open with mmap=False reads entire file into heap bytes."""
+        with tempfile.NamedTemporaryFile(suffix=".dex", delete=True) as tmp:
+            tmp.write(self.dex_bytes)
+            tmp.flush()
+
+            opened_dex = DexFile.open(tmp.name, mmap=False)
+            self.assertIsNone(opened_dex._mmap)
+            self.assertIsNone(opened_dex._file)
+            self.assertTrue(opened_dex.verify_checksum())
+            self.assertTrue(opened_dex.verify_signature())
+            self.assertEqual(opened_dex.get_string(Idx[StringIdItem](0)), "I")
+
+            opened_dex.close()
+
+    def test_open_context_manager(self) -> None:
+        """Verify context manager automatically cleans up resources upon exit."""
+        with tempfile.NamedTemporaryFile(suffix=".dex", delete=True) as tmp:
+            tmp.write(self.dex_bytes)
+            tmp.flush()
+
+            with DexFile.open(tmp.name, mmap=True) as dex:
+                self.assertIsNotNone(dex._mmap)
+                self.assertIsNotNone(dex._file)
+                self.assertTrue(dex.verify_checksum())
+                self.assertEqual(dex.get_string(Idx[StringIdItem](0)), "I")
+
+            self.assertIsNone(dex._mmap)
+            self.assertIsNone(dex._file)
+
+    def test_open_exception_cleanup(self) -> None:
+        """Verify file and mmap handles are closed if instantiation fails during open()."""
+        corrupt_buf = bytearray(self.dex_bytes)
+        corrupt_buf[0:8] = b"badmagic"
+
+        with tempfile.NamedTemporaryFile(suffix=".dex", delete=True) as tmp:
+            tmp.write(corrupt_buf)
+            tmp.flush()
+
+            opened_files = []
+            real_open = open
+
+            def tracking_open(*args: Any, **kwargs: Any) -> Any:
+                f = real_open(*args, **kwargs)
+                opened_files.append(f)
+                return f
+
+            with patch("builtins.open", side_effect=tracking_open):
+                with self.assertRaises(ValueError):
+                    DexFile.open(tmp.name, verify=True, mmap=True)
+
+            self.assertEqual(len(opened_files), 1)
+            self.assertTrue(opened_files[0].closed)
+
+    def test_close_idempotent_and_direct_instantiation(self) -> None:
+        """Verify close() on direct buffer or repeated close() calls are safe."""
+        # Direct instantiation from bytes
+        dex = DexFile(self.dex_bytes)
+        self.assertIsNone(dex._mmap)
+        self.assertIsNone(dex._file)
+        dex.close()
+        dex.close()
+
+        # Instantiation via open
+        with tempfile.NamedTemporaryFile(suffix=".dex", delete=True) as tmp:
+            tmp.write(self.dex_bytes)
+            tmp.flush()
+
+            opened_dex = DexFile.open(tmp.name, mmap=True)
+            opened_dex.close()
+            opened_dex.close()
+            self.assertIsNone(opened_dex._mmap)
+            self.assertIsNone(opened_dex._file)
 
     def test_header_verification(self) -> None:
         """Verify fail-fast header validation and inspection methods."""

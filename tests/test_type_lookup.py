@@ -156,6 +156,41 @@ class TestTypeLookupTable(unittest.TestCase):
         parsed_cur = TypeLookupTableEntry.from_cursor(Cursor(raw, 0))
         self.assertEqual(parsed_cur, entry)
 
+    def test_entry_pack_and_round_trip(self) -> None:
+        """Verify TypeLookupTableEntry.pack static method and round-trip parsing."""
+        import struct
+
+        str_offset = 0x200
+        class_def_idx = 7
+        hash_val = 0xABCD1234
+        next_pos_delta = 3
+        mask_bits = 4
+
+        expected_hash_bits = hash_val >> (2 * mask_bits)
+        expected_data = (
+            (expected_hash_bits << (2 * mask_bits)) | (class_def_idx << mask_bits) | next_pos_delta
+        )
+
+        packed_bytes = TypeLookupTableEntry.pack(
+            str_offset=str_offset,
+            class_def_idx=class_def_idx,
+            hash_val=hash_val,
+            next_pos_delta=next_pos_delta,
+            mask_bits=mask_bits,
+        )
+
+        self.assertEqual(len(packed_bytes), 8)
+
+        expected_bytes = struct.pack("<2I", str_offset, expected_data)
+        self.assertEqual(packed_bytes, expected_bytes)
+
+        parsed_entry = TypeLookupTableEntry.from_buffer(packed_bytes, 0)
+        self.assertEqual(parsed_entry.str_offset, str_offset)
+        self.assertEqual(parsed_entry.data, expected_data)
+        self.assertEqual(parsed_entry.class_def_idx(mask_bits), class_def_idx)
+        self.assertEqual(parsed_entry.hash_bits(mask_bits), expected_hash_bits)
+        self.assertEqual(parsed_entry.next_pos_delta(mask_bits), next_pos_delta)
+
     def test_create_and_lookup_single_class_dex(self) -> None:
         """Verify TypeLookupTable.create and lookup on a single-class DEX file."""
         dex_bytes = create_multi_class_dex(["LTestClass;"])

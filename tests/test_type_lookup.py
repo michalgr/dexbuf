@@ -196,6 +196,26 @@ class TestTypeLookupTable(unittest.TestCase):
         self.assertEqual(table.lookup("LClassA;"), 0)
         self.assertEqual(table.lookup("LClassB;"), 1)
 
+    def test_builder_buckets_reuse_and_clearing(self) -> None:
+        """Verify TypeLookupTableBuilder reuses self.buckets list and clears bucket contents."""
+        dex_bytes = create_multi_class_dex(["LClassA;", "LClassB;"])
+        dex = DexFile(dex_bytes)
+
+        builder = TypeLookupTableBuilder(dex)
+        buckets_id = id(builder.buckets)
+        bucket_sublist_ids = [id(b) for b in builder.buckets]
+
+        builder.collect_buckets()
+        self.assertEqual(id(builder.buckets), buckets_id)
+        self.assertEqual([id(b) for b in builder.buckets], bucket_sublist_ids)
+
+        # Call collect_buckets a second time to verify clearing works without accumulating entries
+        builder.collect_buckets()
+        self.assertEqual(id(builder.buckets), buckets_id)
+        self.assertEqual([id(b) for b in builder.buckets], bucket_sublist_ids)
+        total_bucketed_items = sum(len(b) for b in builder.buckets)
+        self.assertEqual(total_bucketed_items, 2)
+
     def test_create_and_lookup_multi_class_dex(self) -> None:
         """Verify TypeLookupTable.create and lookup on a multi-class DEX file."""
         classes = [

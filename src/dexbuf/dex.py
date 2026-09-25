@@ -273,6 +273,12 @@ class DexFile:
         """Fetch ClassDefItem by index."""
         return self.class_defs.get(idx)
 
+    def get_class_def_string_data_offset(self, class_def: ClassDefItem) -> Offset[StringDataItem]:
+        """Return the StringDataItem offset for the descriptor of a ClassDefItem."""
+        type_id = self.get_type_id(class_def.class_idx)
+        string_id = self.get_string_id(type_id.descriptor_idx)
+        return string_id.string_data_off
+
     def find_class_def(self, target: Idx[TypeIdItem] | str) -> ClassDefItem | None:
         """Find ClassDefItem by type descriptor or type index via stateless linear scan."""
         if isinstance(target, str):

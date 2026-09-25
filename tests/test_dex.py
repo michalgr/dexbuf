@@ -858,6 +858,16 @@ class TestDexFile(unittest.TestCase):
         self.assertEqual(len(empty_dex.type_ids), 0)
         self.assertIsNone(empty_dex.find_type_id("LTestClass;"))
 
+    def test_get_class_def_string_data_offset(self) -> None:
+        """Verify get_class_def_string_data_offset returns StringDataItem offset."""
+        class_def = self.dex.get_class_def(Idx[ClassDefItem](0))
+        str_off = self.dex.get_class_def_string_data_offset(class_def)
+        type_id = self.dex.get_type_id(class_def.class_idx)
+        string_id = self.dex.get_string_id(type_id.descriptor_idx)
+        self.assertEqual(str_off, string_id.string_data_off)
+        str_item = StringDataItem.from_buffer(self.dex._buffer, str_off)
+        self.assertEqual(str_item.decode(), "LTestClass;")
+
     def test_find_class_def(self) -> None:
         """Verify lookup of ClassDefItem by descriptor string and by Idx[TypeIdItem]."""
         # Lookup by descriptor string (existing class)

@@ -8,7 +8,7 @@ from typing import ClassVar, Final, Self, overload
 
 from dexbuf.cursor import Cursor
 from dexbuf.dex import DexFile
-from dexbuf.type_lookup import TypeLookupTable, TypeLookupTableEntry
+from dexbuf.type_lookup import TypeLookupTable, TypeLookupTableBuilder, TypeLookupTableEntry
 from dexbuf.zip import ZipArchive
 
 __all__ = [
@@ -16,6 +16,7 @@ __all__ = [
     "VDEX_FILE_MAGIC",
     "VDEX_INVALID_MAGIC",
     "TypeLookupTable",
+    "TypeLookupTableBuilder",
     "TypeLookupTableEntry",
     "VdexFile",
     "VdexHeader",

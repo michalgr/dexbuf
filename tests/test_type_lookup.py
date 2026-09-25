@@ -5,7 +5,7 @@ from typing import Any
 
 from dexbuf.cursor import Cursor
 from dexbuf.dex import DexFile
-from dexbuf.type_lookup import TypeLookupTable, TypeLookupTableEntry
+from dexbuf.type_lookup import TypeLookupTable, TypeLookupTableBuilder, TypeLookupTableEntry
 
 
 def create_multi_class_dex(class_descriptors: list[str]) -> bytes:
@@ -169,8 +169,32 @@ class TestTypeLookupTable(unittest.TestCase):
         # Lookups
         self.assertEqual(table.lookup("LTestClass;"), 0)
         self.assertEqual(table.lookup(b"LTestClass;"), 0)
+        self.assertEqual(table.lookup(memoryview(b"LTestClass;")), 0)
         self.assertIsNone(table.lookup("Ljava/lang/Object;"))
         self.assertIsNone(table.lookup("LNonExistent;"))
+
+    def test_builder_step_by_step(self) -> None:
+        """Verify TypeLookupTableBuilder steps and output."""
+        dex_bytes = create_multi_class_dex(["LClassA;", "LClassB;"])
+        dex = DexFile(dex_bytes)
+
+        builder = TypeLookupTableBuilder(dex)
+        self.assertEqual(builder.size_entries, 2)
+        self.assertEqual(builder.mask_bits, 1)
+
+        builder.collect_buckets()
+        self.assertEqual(len(builder.buckets), 2)
+
+        builder.place_primary_entries()
+        builder.resolve_collisions()
+
+        raw = builder.pack_entries()
+        self.assertEqual(len(raw), 16)
+
+        table = builder.build()
+        self.assertIsInstance(table, TypeLookupTable)
+        self.assertEqual(table.lookup("LClassA;"), 0)
+        self.assertEqual(table.lookup("LClassB;"), 1)
 
     def test_create_and_lookup_multi_class_dex(self) -> None:
         """Verify TypeLookupTable.create and lookup on a multi-class DEX file."""

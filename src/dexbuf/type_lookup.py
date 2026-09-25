@@ -10,10 +10,13 @@ from typing import ClassVar, Self, overload
 
 from dexbuf.cursor import Cursor
 from dexbuf.dex import DexFile
+from dexbuf.items import StringDataItem
 from dexbuf.mutf8 import compute_mutf8_hash, encode_mutf8
+from dexbuf.types import Offset
 
 __all__ = [
     "TypeLookupTable",
+    "TypeLookupTableBuilder",
     "TypeLookupTableEntry",
 ]
 
@@ -124,118 +127,134 @@ class TypeLookupTable(Sequence[TypeLookupTableEntry]):
         return TypeLookupTableEntry.from_buffer(self._raw_data, index * 8)
 
     def lookup(self, descriptor: str | bytes | Buffer) -> int | None:
-        """Fast O(1) class definition lookup by class descriptor.
-
-        Returns class_def_idx if found, or None if not found.
-        """
+        """Fast O(1) class definition lookup by class descriptor."""
         if self._size_entries == 0:
             return None
 
         if isinstance(descriptor, str):
             target_bytes = encode_mutf8(descriptor, null_terminated=False)
-            target_hash = compute_mutf8_hash(target_bytes)
         elif isinstance(descriptor, (bytes, bytearray, memoryview)):
             target_bytes = bytes(descriptor)
-            target_hash = compute_mutf8_hash(target_bytes)
         else:
             target_bytes = bytes(memoryview(descriptor))
-            target_hash = compute_mutf8_hash(target_bytes)
 
+        target_hash = compute_mutf8_hash(target_bytes)
         mask_bits = self._mask_bits
         mask = self._size_entries - 1
         pos = target_hash & mask if mask_bits > 0 else 0
         target_hash_bits = target_hash >> (2 * mask_bits)
-        class_def_idx_mask = (1 << mask_bits) - 1
 
         for _ in range(self._size_entries):
-            str_offset, data = struct.unpack_from("<2I", self._raw_data, pos * 8)
-            if str_offset == 0:
+            entry = self[pos]
+            if entry.is_empty:
                 return None
 
-            entry_hash_bits = data >> (2 * mask_bits)
-            if entry_hash_bits == target_hash_bits:
-                try:
-                    cursor = Cursor(self._dex_buffer, str_offset)
-                    utf16_size = cursor.read_uleb128()
-                    cand_mutf8 = cursor.read_mutf8_slice(size_hint=utf16_size)
-                    if bytes(cand_mutf8) == target_bytes:
-                        return (data >> mask_bits) & class_def_idx_mask
-                except EOFError, ValueError:
-                    pass
+            if entry.hash_bits(mask_bits) == target_hash_bits:
+                str_item = StringDataItem.from_buffer(
+                    self._dex_buffer, Offset[StringDataItem](entry.str_offset)
+                )
+                if str_item.raw_bytes == target_bytes:
+                    return entry.class_def_idx(mask_bits)
 
-            next_pos_delta = data & ((1 << mask_bits) - 1)
-            if next_pos_delta == 0:
+            delta = entry.next_pos_delta(mask_bits)
+            if delta == 0:
                 return None
-
-            pos = (pos + next_pos_delta) & mask
+            pos = (pos + delta) & mask
 
         return None
 
     @classmethod
     def create(cls, dex: DexFile) -> Self:
-        """Construct a TypeLookupTable for the given DexFile."""
+        """Construct a TypeLookupTable for the given DexFile using TypeLookupTableBuilder."""
+        table = TypeLookupTableBuilder(dex).build()
+        assert isinstance(table, cls)
+        return table
+
+
+class TypeLookupTableBuilder:
+    """Builder for constructing DEX TypeLookupTable binary layouts."""
+
+    __slots__ = ("buckets", "dex", "mask", "mask_bits", "size_entries", "table_slots")
+
+    def __init__(self, dex: DexFile) -> None:
+        """Initialize TypeLookupTableBuilder for a given DexFile."""
+        self.dex: DexFile = dex
         num_class_defs = len(dex.class_defs)
         if num_class_defs == 0:
-            mask_bits = 0
-            size_entries = 1
+            self.mask_bits: int = 0
+            self.size_entries: int = 1
         else:
-            mask_bits = (num_class_defs - 1).bit_length()
-            size_entries = 1 << mask_bits
+            self.mask_bits = (num_class_defs - 1).bit_length()
+            self.size_entries = 1 << self.mask_bits
 
-        mask = size_entries - 1
+        self.mask: int = self.size_entries - 1
+        self.buckets: list[list[tuple[int, int, int]]] = [[] for _ in range(self.size_entries)]
+        self.table_slots: list[tuple[int, int, int, int] | None] = [None] * self.size_entries
 
-        # Collect info for all class defs: (class_def_idx, str_offset, hash_val)
-        buckets: list[list[tuple[int, int, int]]] = [[] for _ in range(size_entries)]
-
+    def collect_buckets(self) -> None:
+        """Iterate over dex.class_defs, compute MUTF-8 hashes, and bucket them."""
+        self.buckets = [[] for _ in range(self.size_entries)]
+        num_class_defs = len(self.dex.class_defs)
         for i in range(num_class_defs):
-            cd = dex.class_defs[i]
-            type_id = dex.get_type_id(cd.class_idx)
-            string_id = dex.get_string_id(type_id.descriptor_idx)
+            cd = self.dex.class_defs[i]
+            type_id = self.dex.get_type_id(cd.class_idx)
+            string_id = self.dex.get_string_id(type_id.descriptor_idx)
             str_offset = string_id.string_data_off
-            string_data = dex.get_string_data(type_id.descriptor_idx)
-            descriptor_bytes = string_data.raw_bytes
-            hash_val = compute_mutf8_hash(descriptor_bytes)
-            b_idx = hash_val & mask if mask_bits > 0 else 0
-            buckets[b_idx].append((i, str_offset, hash_val))
+            string_data = self.dex.get_string_data(type_id.descriptor_idx)
+            hash_val = compute_mutf8_hash(string_data.raw_bytes)
+            b_idx = hash_val & self.mask if self.mask_bits > 0 else 0
+            self.buckets[b_idx].append((i, str_offset, hash_val))
 
-        # Build table entries: (class_def_idx, str_offset, hash_val, next_pos_delta) or None
-        table_slots: list[tuple[int, int, int, int] | None] = [None] * size_entries
+    def place_primary_entries(self) -> None:
+        """Pass 1: Place first element of each non-empty bucket at its home slot."""
+        for b in range(self.size_entries):
+            if self.buckets[b]:
+                primary = self.buckets[b][0]
+                self.table_slots[b] = (primary[0], primary[1], primary[2], 0)
 
-        # Pass 1: Place primary items at home bucket
-        for b in range(size_entries):
-            if buckets[b]:
-                primary = buckets[b][0]
-                table_slots[b] = (primary[0], primary[1], primary[2], 0)
-
-        # Pass 2: Place secondary items and build collision chains
-        for b in range(size_entries):
-            chain = buckets[b]
+    def resolve_collisions(self) -> None:
+        """Pass 2: Place secondary elements in nearest free slots and update links."""
+        for b in range(self.size_entries):
+            chain = self.buckets[b]
             if len(chain) > 1:
                 prev_slot = b
                 for item in chain[1:]:
-                    empty_slot = (prev_slot + 1) & mask if mask_bits > 0 else 0
-                    while table_slots[empty_slot] is not None:
-                        empty_slot = (empty_slot + 1) & mask if mask_bits > 0 else 0
+                    empty_slot = (prev_slot + 1) & self.mask if self.mask_bits > 0 else 0
+                    steps = 0
+                    while self.table_slots[empty_slot] is not None:
+                        empty_slot = (empty_slot + 1) & self.mask if self.mask_bits > 0 else 0
+                        steps += 1
+                        if steps > self.size_entries:
+                            raise ValueError("No free slot available in TypeLookupTable")
 
-                    table_slots[empty_slot] = (item[0], item[1], item[2], 0)
+                    self.table_slots[empty_slot] = (item[0], item[1], item[2], 0)
 
-                    delta = (empty_slot - prev_slot) & mask if mask_bits > 0 else 0
-                    p_slot = table_slots[prev_slot]
+                    delta = (empty_slot - prev_slot) & self.mask if self.mask_bits > 0 else 0
+                    p_slot = self.table_slots[prev_slot]
                     assert p_slot is not None
                     p_idx, p_off, p_hash, _ = p_slot
-                    table_slots[prev_slot] = (p_idx, p_off, p_hash, delta)
+                    self.table_slots[prev_slot] = (p_idx, p_off, p_hash, delta)
 
                     prev_slot = empty_slot
 
-        # Pack into raw binary bytes
+    def pack_entries(self) -> bytes:
+        """Serialize table slots into raw binary bytes."""
         raw_bytes = bytearray()
-        for slot in table_slots:
+        for slot in self.table_slots:
             if slot is None:
                 raw_bytes.extend(b"\x00" * 8)
             else:
                 c_idx, s_off, h_val, delta = slot
-                hash_bits = h_val >> (2 * mask_bits)
-                data = (hash_bits << (2 * mask_bits)) | (c_idx << mask_bits) | delta
+                hash_bits = h_val >> (2 * self.mask_bits)
+                data = (hash_bits << (2 * self.mask_bits)) | (c_idx << self.mask_bits) | delta
                 raw_bytes.extend(struct.pack("<2I", s_off, data))
 
-        return cls(dex._buffer, bytes(raw_bytes))
+        return bytes(raw_bytes)
+
+    def build(self) -> TypeLookupTable:
+        """Coordinate creation steps and return an instantiated TypeLookupTable."""
+        self.collect_buckets()
+        self.place_primary_entries()
+        self.resolve_collisions()
+        raw_data = self.pack_entries()
+        return TypeLookupTable(self.dex._buffer, raw_data)

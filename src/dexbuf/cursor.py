@@ -156,7 +156,7 @@ class Cursor:
         self._offset += count
         return mv
 
-    def subcursor(self, offset: int | None = None, length: int | None = None) -> Cursor:
+    def subcursor(self, offset: int | None = None, length: int | None = None) -> Self:
         """Create a child Cursor slice without advancing self._offset."""
         sub_offset = self._offset if offset is None else offset
         if not (0 <= sub_offset <= len(self._buffer)):
@@ -175,7 +175,7 @@ class Cursor:
                 f"buffer length {len(self._buffer)}"
             )
 
-        return Cursor(self._buffer[sub_offset : sub_offset + sub_length])
+        return type(self)(self._buffer[sub_offset : sub_offset + sub_length])
 
     # --- Variable-length entity decoding ---
 

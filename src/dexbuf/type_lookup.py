@@ -193,14 +193,13 @@ class TypeLookupTableBuilder:
 
     def collect_buckets(self) -> None:
         """Iterate over dex.class_defs, compute MUTF-8 hashes, and bucket them."""
-        self.buckets = [[] for _ in range(self.size_entries)]
+        for bucket in self.buckets:
+            bucket.clear()
         num_class_defs = len(self.dex.class_defs)
         for i in range(num_class_defs):
             cd = self.dex.class_defs[i]
-            type_id = self.dex.get_type_id(cd.class_idx)
-            string_id = self.dex.get_string_id(type_id.descriptor_idx)
-            str_offset = string_id.string_data_off
-            string_data = self.dex.get_string_data(type_id.descriptor_idx)
+            str_offset = self.dex.get_class_def_string_data_offset(cd)
+            string_data = StringDataItem.from_buffer(self.dex._buffer, str_offset)
             hash_val = compute_mutf8_hash(string_data.raw_bytes)
             b_idx = hash_val & self.mask if self.mask_bits > 0 else 0
             self.buckets[b_idx].append((i, str_offset, hash_val))

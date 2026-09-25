@@ -76,6 +76,7 @@ from dexbuf.items import (
     TypeList,
 )
 from dexbuf.mutf8 import compute_mutf8_hash
+from dexbuf.type_lookup import TypeLookupTableBuilder
 from dexbuf.types import (
     NO_INDEX,
     NO_OFFSET,
@@ -196,6 +197,7 @@ __all__ = [
     "TypeIdItem",
     "TypeList",
     "TypeLookupTable",
+    "TypeLookupTableBuilder",
     "TypeLookupTableEntry",
     "ValueType",
     "VdexFile",

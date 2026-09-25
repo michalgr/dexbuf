@@ -95,6 +95,7 @@ class TestSanity(unittest.TestCase):
             "TypeIdItem",
             "TypeList",
             "TypeLookupTable",
+            "TypeLookupTableBuilder",
             "TypeLookupTableEntry",
             "ValueType",
             "VdexFile",

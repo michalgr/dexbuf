@@ -3,6 +3,8 @@
 See https://source.android.com/docs/core/runtime/dex-format#encoded-value-encoding
 """
 
+from __future__ import annotations
+
 import struct
 from collections.abc import Iterator
 from dataclasses import dataclass

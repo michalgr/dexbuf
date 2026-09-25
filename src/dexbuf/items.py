@@ -3,8 +3,6 @@
 See https://source.android.com/docs/core/runtime/dex-format
 """
 
-from __future__ import annotations
-
 import struct
 from collections.abc import Buffer, Iterator, Mapping, Sequence
 from dataclasses import dataclass

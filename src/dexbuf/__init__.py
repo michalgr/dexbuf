@@ -75,6 +75,7 @@ from dexbuf.items import (
     TypeIdItem,
     TypeList,
 )
+from dexbuf.mmap import open_mmap, scoped_mmap
 from dexbuf.mutf8 import compute_mutf8_hash
 from dexbuf.types import (
     NO_INDEX,
@@ -210,6 +211,8 @@ __all__ = [
     "format_field_flags",
     "format_method_descriptor",
     "format_method_flags",
+    "open_mmap",
     "parse_method_descriptor",
+    "scoped_mmap",
     "type_name_to_descriptor",
 ]

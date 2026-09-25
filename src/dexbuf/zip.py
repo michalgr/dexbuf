@@ -1,13 +1,10 @@
 """Stateless, zero-copy ZIP archive reader and specification structures."""
 
-import mmap as mmap_module
-import os
 import struct
 import zlib
 from collections.abc import Buffer, Iterator
 from dataclasses import dataclass
-from types import TracebackType
-from typing import BinaryIO, ClassVar, Self
+from typing import ClassVar, Self
 
 from dexbuf.cursor import Cursor
 
@@ -243,12 +240,10 @@ class LocalFileHeader:
 class ZipArchive:
     """Zero-copy, stateless ZIP archive reader operating on a Buffer."""
 
-    __slots__ = ("_buffer", "_file", "_mmap", "eocd")
+    __slots__ = ("_buffer", "eocd")
 
     def __init__(self, buffer: Buffer) -> None:
         self._buffer: memoryview = memoryview(buffer).cast("B")
-        self._file: BinaryIO | None = None
-        self._mmap: mmap_module.mmap | None = None
 
         buf_len = len(self._buffer)
         if buf_len < 22:
@@ -276,50 +271,6 @@ class ZipArchive:
         self.eocd: EndOfCentralDirectoryRecord = EndOfCentralDirectoryRecord.from_buffer(
             self._buffer, found_offset
         )
-
-    @classmethod
-    def open(cls, path: str | os.PathLike[str], *, mmap: bool = True) -> Self:
-        """Open a ZIP file from disk with optional memory-mapping."""
-        if mmap:
-            f = open(path, "rb")
-            try:
-                mm = mmap_module.mmap(f.fileno(), 0, access=mmap_module.ACCESS_READ)
-            except Exception:
-                f.close()
-                raise
-            archive = cls(mm)
-            archive._file = f
-            archive._mmap = mm
-            return archive
-        else:
-            with open(path, "rb") as f:
-                data = f.read()
-            return cls(data)
-
-    def close(self) -> None:
-        """Close underlying file or memory-mapping resources if opened via open()."""
-        if self._mmap is not None:
-            if hasattr(self, "_buffer"):
-                try:
-                    self._buffer.release()
-                except BufferError:
-                    pass
-            self._mmap.close()
-            self._mmap = None
-        if self._file is not None:
-            self._file.close()
-            self._file = None
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> None:
-        self.close()
 
     def iter_entries(self) -> Iterator[CentralDirectoryHeader]:
         """Stream Central Directory entries lazily without caching."""

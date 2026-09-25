@@ -109,7 +109,9 @@ class TestSanity(unittest.TestCase):
             "format_field_flags",
             "format_method_descriptor",
             "format_method_flags",
+            "open_mmap",
             "parse_method_descriptor",
+            "scoped_mmap",
             "type_name_to_descriptor",
         ]
         self.assertEqual(dexbuf.__all__, expected_all)

@@ -1,13 +1,10 @@
 """Zero-copy, stateless Android 12+ (v027+) VDEX container parser and specification structures."""
 
 import enum
-import mmap as mmap_module
-import os
 import struct
 from collections.abc import Buffer, Iterator, Sequence
 from dataclasses import dataclass
-from types import TracebackType
-from typing import BinaryIO, ClassVar, Final, Self, overload
+from typing import ClassVar, Final, Self, overload
 
 from dexbuf.cursor import Cursor
 from dexbuf.dex import DexFile
@@ -119,7 +116,7 @@ class VdexSectionHeader:
 class VdexFile(Sequence[VdexSectionHeader]):
     """Zero-copy, stateless Android 12+ (v027+) VDEX container file reader."""
 
-    __slots__ = ("_buffer", "_file", "_mmap", "header")
+    __slots__ = ("_buffer", "header")
 
     def __init__(self, buffer: Buffer) -> None:
         """Initialize VdexFile lazily.
@@ -129,8 +126,6 @@ class VdexFile(Sequence[VdexSectionHeader]):
         Does NOT pre-allocate cached lists or tuples of sections, checksums, or DEX offsets.
         """
         self._buffer: memoryview = memoryview(buffer).cast("B")
-        self._file: BinaryIO | None = None
-        self._mmap: mmap_module.mmap | None = None
 
         if len(self._buffer) < VdexHeader.STRUCT.size:
             expected = VdexHeader.STRUCT.size
@@ -148,50 +143,6 @@ class VdexFile(Sequence[VdexSectionHeader]):
                 f"Buffer too small for section header table: expected at least "
                 f"{required_size} bytes, got {len(self._buffer)}"
             )
-
-    @classmethod
-    def open(cls, path: str | os.PathLike[str], *, mmap: bool = True) -> Self:
-        """Open a VDEX file from disk with optional memory-mapping."""
-        if mmap:
-            f = open(path, "rb")
-            try:
-                mm = mmap_module.mmap(f.fileno(), 0, access=mmap_module.ACCESS_READ)
-            except Exception:
-                f.close()
-                raise
-            vdex = cls(mm)
-            vdex._file = f
-            vdex._mmap = mm
-            return vdex
-        else:
-            with open(path, "rb") as f:
-                data = f.read()
-            return cls(data)
-
-    def close(self) -> None:
-        """Close underlying file or memory-mapping resources if opened via open()."""
-        if self._mmap is not None:
-            if hasattr(self, "_buffer"):
-                try:
-                    self._buffer.release()
-                except BufferError:
-                    pass
-            self._mmap.close()
-            self._mmap = None
-        if self._file is not None:
-            self._file.close()
-            self._file = None
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> None:
-        self.close()
 
     # Section Streaming & Inspection
     def iter_sections(self) -> Iterator[VdexSectionHeader]:

@@ -6,6 +6,7 @@ import unittest
 import zipfile
 from typing import Any
 
+from dexbuf import open_mmap, scoped_mmap
 from dexbuf.dex import DexFile
 from dexbuf.items import (
     DEX_FILE_MAGIC,
@@ -250,8 +251,8 @@ class TestZipArchive(unittest.TestCase):
             archive.read(unsupported_cd)
         self.assertIn("Unsupported compression method 99", str(ctx.exception))
 
-    def test_open_mmap_and_context_manager(self) -> None:
-        """Verify open() with mmap and context manager lifecycle."""
+    def test_zip_with_scoped_and_open_mmap(self) -> None:
+        """Verify initializing ZipArchive with scoped_mmap, open_mmap, and bytes."""
         zip_bytes = create_test_zip([("file.txt", b"Content", zipfile.ZIP_STORED)])
 
         with tempfile.NamedTemporaryFile("wb", delete=False) as tf:
@@ -259,15 +260,25 @@ class TestZipArchive(unittest.TestCase):
             tmp_path = tf.name
 
         try:
-            # open with mmap=True
-            with ZipArchive.open(tmp_path, mmap=True) as archive:
+            # scoped_mmap
+            with scoped_mmap(tmp_path) as mm:
+                archive = ZipArchive(mm)
                 self.assertEqual(archive.namelist(), ["file.txt"])
                 self.assertEqual(bytes(archive["file.txt"]), b"Content")
 
-            # open with mmap=False
-            with ZipArchive.open(tmp_path, mmap=False) as archive:
-                self.assertEqual(archive.namelist(), ["file.txt"])
-                self.assertEqual(bytes(archive["file.txt"]), b"Content")
+            # open_mmap
+            mm = open_mmap(tmp_path)
+            archive = ZipArchive(mm)
+            self.assertEqual(archive.namelist(), ["file.txt"])
+            self.assertEqual(bytes(archive["file.txt"]), b"Content")
+            del archive
+            mm.close()
+            self.assertTrue(mm.closed)
+
+            # bytes
+            archive_b = ZipArchive(zip_bytes)
+            self.assertEqual(archive_b.namelist(), ["file.txt"])
+            self.assertEqual(bytes(archive_b["file.txt"]), b"Content")
         finally:
             import os
 

@@ -9,6 +9,7 @@ import zipfile
 from collections.abc import Sequence
 from typing import Any, cast
 
+from dexbuf import open_mmap, scoped_mmap
 from dexbuf.dex import DexFile
 from dexbuf.items import (
     DEX_FILE_MAGIC,
@@ -859,8 +860,8 @@ class TestVdexFile(unittest.TestCase):
             list(vdex_trunc.iter_type_lookup_table_data())
         self.assertIn("Invalid table size", str(ctx.exception))
 
-    def test_open_mmap_and_context_manager(self) -> None:
-        """Verify open() with mmap and context manager lifecycle."""
+    def test_vdex_with_scoped_and_open_mmap(self) -> None:
+        """Verify initializing VdexFile with scoped_mmap, open_mmap, and bytes."""
         deps_data = b"verifier_deps_payload"
         vdex_bytes = create_test_vdex([(VdexSectionKind.VERIFIER_DEPS, deps_data)])
 
@@ -869,19 +870,29 @@ class TestVdexFile(unittest.TestCase):
             tmp_path = tf.name
 
         try:
-            # open with mmap=True
-            with VdexFile.open(tmp_path, mmap=True) as vdex:
+            # scoped_mmap
+            with scoped_mmap(tmp_path) as mm:
+                vdex = VdexFile(mm)
                 self.assertEqual(len(vdex), 1)
                 self.assertEqual(
                     bytes(vdex.get_section_data(VdexSectionKind.VERIFIER_DEPS)), deps_data
                 )
 
-            # open with mmap=False
-            with VdexFile.open(tmp_path, mmap=False) as vdex:
-                self.assertEqual(len(vdex), 1)
-                self.assertEqual(
-                    bytes(vdex.get_section_data(VdexSectionKind.VERIFIER_DEPS)), deps_data
-                )
+            # open_mmap
+            mm = open_mmap(tmp_path)
+            vdex = VdexFile(mm)
+            self.assertEqual(len(vdex), 1)
+            self.assertEqual(bytes(vdex.get_section_data(VdexSectionKind.VERIFIER_DEPS)), deps_data)
+            del vdex
+            mm.close()
+            self.assertTrue(mm.closed)
+
+            # bytes
+            vdex_b = VdexFile(vdex_bytes)
+            self.assertEqual(len(vdex_b), 1)
+            self.assertEqual(
+                bytes(vdex_b.get_section_data(VdexSectionKind.VERIFIER_DEPS)), deps_data
+            )
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)

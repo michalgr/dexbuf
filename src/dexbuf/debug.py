@@ -3,8 +3,6 @@
 See https://source.android.com/docs/core/runtime/dex-format#debug-info-item
 """
 
-from __future__ import annotations
-
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from enum import IntEnum

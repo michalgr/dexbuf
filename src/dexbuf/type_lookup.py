@@ -184,6 +184,16 @@ class TypeLookupTable(Sequence[TypeLookupTableEntry]):
         return table
 
 
+@dataclass(slots=True)
+class _BuilderEntry:
+    """Internal mutable entry used during TypeLookupTable construction."""
+
+    class_def_idx: int
+    str_offset: int
+    hash_val: int
+    next_pos_delta: int = 0
+
+
 class TypeLookupTableBuilder:
     """Builder for constructing DEX TypeLookupTable binary layouts."""
 
@@ -201,8 +211,8 @@ class TypeLookupTableBuilder:
             self.size_entries = 1 << self.mask_bits
 
         self.mask: int = max(0, self.size_entries - 1)
-        self.buckets: list[list[tuple[int, int, int]]] = [[] for _ in range(self.size_entries)]
-        self.table_slots: list[tuple[int, int, int, int] | None] = [None] * self.size_entries
+        self.buckets: list[list[_BuilderEntry]] = [[] for _ in range(self.size_entries)]
+        self.table_slots: list[_BuilderEntry | None] = [None] * self.size_entries
 
     def collect_buckets(self) -> None:
         """Iterate over dex.class_defs, compute MUTF-8 hashes, and bucket them."""
@@ -215,14 +225,15 @@ class TypeLookupTableBuilder:
             string_data = StringDataItem.from_buffer(self.dex._buffer, str_offset)
             hash_val = compute_mutf8_hash(string_data.raw_bytes)
             b_idx = hash_val & self.mask
-            self.buckets[b_idx].append((i, str_offset, hash_val))
+            self.buckets[b_idx].append(
+                _BuilderEntry(class_def_idx=i, str_offset=str_offset, hash_val=hash_val)
+            )
 
     def place_primary_entries(self) -> None:
         """Pass 1: Place first element of each non-empty bucket at its home slot."""
         for b in range(self.size_entries):
             if self.buckets[b]:
-                primary = self.buckets[b][0]
-                self.table_slots[b] = (primary[0], primary[1], primary[2], 0)
+                self.table_slots[b] = self.buckets[b][0]
 
     def resolve_collisions(self) -> None:
         """Pass 2: Place secondary elements in nearest free slots and update links."""
@@ -235,13 +246,11 @@ class TypeLookupTableBuilder:
                     while self.table_slots[empty_slot] is not None:
                         empty_slot = (empty_slot + 1) & self.mask
 
-                    self.table_slots[empty_slot] = (item[0], item[1], item[2], 0)
+                    self.table_slots[empty_slot] = item
 
-                    delta = (empty_slot - prev_slot) & self.mask
-                    p_slot = self.table_slots[prev_slot]
-                    assert p_slot is not None
-                    p_idx, p_off, p_hash, _ = p_slot
-                    self.table_slots[prev_slot] = (p_idx, p_off, p_hash, delta)
+                    prev_entry = self.table_slots[prev_slot]
+                    assert prev_entry is not None
+                    prev_entry.next_pos_delta = (empty_slot - prev_slot) & self.mask
 
                     prev_slot = empty_slot
 
@@ -252,13 +261,12 @@ class TypeLookupTableBuilder:
             if slot is None:
                 raw_bytes.extend(b"\x00" * 8)
             else:
-                c_idx, s_off, h_val, delta = slot
                 raw_bytes.extend(
                     TypeLookupTableEntry.pack(
-                        str_offset=s_off,
-                        class_def_idx=c_idx,
-                        hash_val=h_val,
-                        next_pos_delta=delta,
+                        str_offset=slot.str_offset,
+                        class_def_idx=slot.class_def_idx,
+                        hash_val=slot.hash_val,
+                        next_pos_delta=slot.next_pos_delta,
                         mask_bits=self.mask_bits,
                     )
                 )

@@ -154,7 +154,7 @@ class TypeLookupTable(Sequence[TypeLookupTableEntry]):
         target_hash = compute_mutf8_hash(target_bytes)
         mask_bits = self._mask_bits
         mask = self._size_entries - 1
-        pos = target_hash & mask if mask_bits > 0 else 0
+        pos = target_hash & mask
         target_hash_bits = target_hash >> (2 * mask_bits)
 
         for _ in range(self._size_entries):
@@ -195,12 +195,12 @@ class TypeLookupTableBuilder:
         num_class_defs = len(dex.class_defs)
         if num_class_defs == 0:
             self.mask_bits: int = 0
-            self.size_entries: int = 1
+            self.size_entries: int = 0
         else:
             self.mask_bits = (num_class_defs - 1).bit_length()
             self.size_entries = 1 << self.mask_bits
 
-        self.mask: int = self.size_entries - 1
+        self.mask: int = max(0, self.size_entries - 1)
         self.buckets: list[list[tuple[int, int, int]]] = [[] for _ in range(self.size_entries)]
         self.table_slots: list[tuple[int, int, int, int] | None] = [None] * self.size_entries
 
@@ -214,7 +214,7 @@ class TypeLookupTableBuilder:
             str_offset = self.dex.get_class_def_string_data_offset(cd)
             string_data = StringDataItem.from_buffer(self.dex._buffer, str_offset)
             hash_val = compute_mutf8_hash(string_data.raw_bytes)
-            b_idx = hash_val & self.mask if self.mask_bits > 0 else 0
+            b_idx = hash_val & self.mask
             self.buckets[b_idx].append((i, str_offset, hash_val))
 
     def place_primary_entries(self) -> None:
@@ -231,17 +231,17 @@ class TypeLookupTableBuilder:
             if len(chain) > 1:
                 prev_slot = b
                 for item in chain[1:]:
-                    empty_slot = (prev_slot + 1) & self.mask if self.mask_bits > 0 else 0
+                    empty_slot = (prev_slot + 1) & self.mask
                     steps = 0
                     while self.table_slots[empty_slot] is not None:
-                        empty_slot = (empty_slot + 1) & self.mask if self.mask_bits > 0 else 0
+                        empty_slot = (empty_slot + 1) & self.mask
                         steps += 1
                         if steps > self.size_entries:
                             raise ValueError("No free slot available in TypeLookupTable")
 
                     self.table_slots[empty_slot] = (item[0], item[1], item[2], 0)
 
-                    delta = (empty_slot - prev_slot) & self.mask if self.mask_bits > 0 else 0
+                    delta = (empty_slot - prev_slot) & self.mask
                     p_slot = self.table_slots[prev_slot]
                     assert p_slot is not None
                     p_idx, p_off, p_hash, _ = p_slot
@@ -271,6 +271,8 @@ class TypeLookupTableBuilder:
 
     def build(self) -> TypeLookupTable:
         """Coordinate creation steps and return an instantiated TypeLookupTable."""
+        if self.size_entries == 0:
+            return TypeLookupTable(self.dex._buffer, b"")
         self.collect_buckets()
         self.place_primary_entries()
         self.resolve_collisions()

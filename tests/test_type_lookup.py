@@ -5,7 +5,12 @@ from typing import Any
 
 from dexbuf.cursor import Cursor
 from dexbuf.dex import DexFile
-from dexbuf.type_lookup import TypeLookupTable, TypeLookupTableBuilder, TypeLookupTableEntry
+from dexbuf.type_lookup import (
+    TypeLookupTable,
+    TypeLookupTableBuilder,
+    TypeLookupTableEntry,
+    _BuilderEntry,
+)
 
 
 def create_multi_class_dex(class_descriptors: list[str]) -> bytes:
@@ -156,8 +161,8 @@ class TestTypeLookupTable(unittest.TestCase):
         parsed_cur = TypeLookupTableEntry.from_cursor(Cursor(raw, 0))
         self.assertEqual(parsed_cur, entry)
 
-    def test_entry_pack_and_round_trip(self) -> None:
-        """Verify TypeLookupTableEntry.pack static method and round-trip parsing."""
+    def test_entry_encode_and_round_trip(self) -> None:
+        """Verify _BuilderEntry.encode method and round-trip parsing."""
         import struct
 
         str_offset = 0x200
@@ -171,13 +176,13 @@ class TestTypeLookupTable(unittest.TestCase):
             (expected_hash_bits << (2 * mask_bits)) | (class_def_idx << mask_bits) | next_pos_delta
         )
 
-        packed_bytes = TypeLookupTableEntry.pack(
+        builder_entry = _BuilderEntry(
             str_offset=str_offset,
             class_def_idx=class_def_idx,
             hash_val=hash_val,
             next_pos_delta=next_pos_delta,
-            mask_bits=mask_bits,
         )
+        packed_bytes = builder_entry.encode(mask_bits)
 
         self.assertEqual(len(packed_bytes), 8)
 

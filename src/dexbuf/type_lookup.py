@@ -232,12 +232,8 @@ class TypeLookupTableBuilder:
                 prev_slot = b
                 for item in chain[1:]:
                     empty_slot = (prev_slot + 1) & self.mask
-                    steps = 0
                     while self.table_slots[empty_slot] is not None:
                         empty_slot = (empty_slot + 1) & self.mask
-                        steps += 1
-                        if steps > self.size_entries:
-                            raise ValueError("No free slot available in TypeLookupTable")
 
                     self.table_slots[empty_slot] = (item[0], item[1], item[2], 0)
 

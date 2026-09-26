@@ -76,6 +76,15 @@ from dexbuf.items import (
     TypeList,
 )
 from dexbuf.mmap import open_mmap, scoped_mmap
+from dexbuf.model import (
+    Class,
+    ClassLoader,
+    ClassLoaderElement,
+    ResolvedClass,
+    UnresolvedClass,
+    load,
+    open,
+)
 from dexbuf.mutf8 import compute_mutf8_hash
 from dexbuf.type_lookup import TypeLookupTableBuilder
 from dexbuf.types import (
@@ -147,8 +156,11 @@ __all__ = [
     "CallSiteIdItem",
     "CatchHandlerMap",
     "CentralDirectoryHeader",
+    "Class",
     "ClassDataItem",
     "ClassDefItem",
+    "ClassLoader",
+    "ClassLoaderElement",
     "CodeItem",
     "Count",
     "DebugInfoItem",
@@ -190,6 +202,7 @@ __all__ = [
     "Payload",
     "ProtoIdItem",
     "Reg",
+    "ResolvedClass",
     "StaticItem",
     "StringDataItem",
     "StringIdItem",
@@ -200,6 +213,7 @@ __all__ = [
     "TypeLookupTable",
     "TypeLookupTableBuilder",
     "TypeLookupTableEntry",
+    "UnresolvedClass",
     "ValueType",
     "VdexFile",
     "VdexHeader",
@@ -213,6 +227,8 @@ __all__ = [
     "format_field_flags",
     "format_method_descriptor",
     "format_method_flags",
+    "load",
+    "open",
     "open_mmap",
     "parse_method_descriptor",
     "scoped_mmap",

@@ -67,19 +67,6 @@ class TypeLookupTableEntry:
         """Encode entry to raw bytes."""
         return self.STRUCT.pack(self.str_offset, self.data)
 
-    @staticmethod
-    def pack(
-        str_offset: int,
-        class_def_idx: int,
-        hash_val: int,
-        next_pos_delta: int,
-        mask_bits: int,
-    ) -> bytes:
-        """Pack entry components into 8 raw binary bytes."""
-        hash_bits = hash_val >> (2 * mask_bits)
-        data = (hash_bits << (2 * mask_bits)) | (class_def_idx << mask_bits) | next_pos_delta
-        return TypeLookupTableEntry.STRUCT.pack(str_offset, data)
-
 
 class TypeLookupTable(Sequence[TypeLookupTableEntry]):
     """Zero-copy hash-based lookup table for fast DEX class definition resolution."""
@@ -193,6 +180,14 @@ class _BuilderEntry:
     hash_val: int
     next_pos_delta: int = 0
 
+    def encode(self, mask_bits: int) -> bytes:
+        """Encode builder entry to 8 raw binary bytes given table mask_bits."""
+        hash_bits = self.hash_val >> (2 * mask_bits)
+        data = (
+            (hash_bits << (2 * mask_bits)) | (self.class_def_idx << mask_bits) | self.next_pos_delta
+        )
+        return TypeLookupTableEntry.STRUCT.pack(self.str_offset, data)
+
 
 class TypeLookupTableBuilder:
     """Builder for constructing DEX TypeLookupTable binary layouts."""
@@ -261,15 +256,7 @@ class TypeLookupTableBuilder:
             if slot is None:
                 raw_bytes.extend(b"\x00" * 8)
             else:
-                raw_bytes.extend(
-                    TypeLookupTableEntry.pack(
-                        str_offset=slot.str_offset,
-                        class_def_idx=slot.class_def_idx,
-                        hash_val=slot.hash_val,
-                        next_pos_delta=slot.next_pos_delta,
-                        mask_bits=self.mask_bits,
-                    )
-                )
+                raw_bytes.extend(slot.encode(self.mask_bits))
 
         return bytes(raw_bytes)
 

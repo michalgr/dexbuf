@@ -191,6 +191,21 @@ class TestTypeLookupTable(unittest.TestCase):
         self.assertEqual(parsed_entry.hash_bits(mask_bits), expected_hash_bits)
         self.assertEqual(parsed_entry.next_pos_delta(mask_bits), next_pos_delta)
 
+    def test_create_and_lookup_zero_class_dex(self) -> None:
+        """Verify TypeLookupTable.create and lookup on a DEX file with 0 class definitions."""
+        dex_bytes = create_multi_class_dex([])
+        dex = DexFile(dex_bytes)
+
+        table = TypeLookupTable.create(dex)
+        self.assertIsInstance(table, TypeLookupTable)
+        self.assertEqual(len(table), 0)
+        self.assertEqual(table.raw_data, b"")
+        self.assertEqual(table.mask_bits, 0)
+
+        # Lookups on 0-class DEX table should return None
+        self.assertIsNone(table.lookup("LTestClass;"))
+        self.assertIsNone(table.lookup("Ljava/lang/Object;"))
+
     def test_create_and_lookup_single_class_dex(self) -> None:
         """Verify TypeLookupTable.create and lookup on a single-class DEX file."""
         dex_bytes = create_multi_class_dex(["LTestClass;"])

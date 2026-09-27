@@ -422,6 +422,12 @@ class TestClassLoader(unittest.TestCase):
         self.assertEqual(all_foos[0].source_file, "Foo1.java")
         self.assertEqual(all_foos[1].source_file, "Foo2.java")
 
+        iter_classes = list(loader)
+        self.assertEqual(len(iter_classes), 2)
+        self.assertEqual(len(loader), 2)
+        self.assertEqual(iter_classes[0].source_file, "Foo1.java")
+        self.assertEqual(iter_classes[1].source_file, "Foo2.java")
+
     def test_find_glob_pattern(self) -> None:
         dex = DexFile(
             build_dex_bytes(
@@ -636,6 +642,7 @@ class TestAdaptersAndCustomElements(unittest.TestCase):
         self.assertIsNotNone(cls_dex)
         self.assertEqual(len(dex_adapter.find_all("Lcom/example/Foo;")), 1)
         self.assertEqual(len(list(dex_adapter)), 1)
+        self.assertEqual(len(dex_adapter), 1)
 
         # VdexAdapter
         vdex_adapter = VdexAdapter(vdex, loader)
@@ -644,6 +651,7 @@ class TestAdaptersAndCustomElements(unittest.TestCase):
         self.assertIsNotNone(cls_vdex)
         self.assertEqual(len(vdex_adapter.find_all("Lcom/example/Foo;")), 1)
         self.assertEqual(len(list(vdex_adapter)), 1)
+        self.assertEqual(len(vdex_adapter), 1)
 
         # ZipAdapter
         zip_adapter = ZipAdapter(zip_archive, loader)
@@ -652,6 +660,7 @@ class TestAdaptersAndCustomElements(unittest.TestCase):
         self.assertIsNotNone(cls_zip)
         self.assertEqual(len(zip_adapter.find_all("Lcom/example/Foo;")), 1)
         self.assertEqual(len(list(zip_adapter)), 1)
+        self.assertEqual(len(zip_adapter), 1)
 
     def test_custom_user_element(self) -> None:
         dex_bytes = build_dex_bytes(
@@ -679,6 +688,9 @@ class TestAdaptersAndCustomElements(unittest.TestCase):
             def __iter__(self) -> Iterator[ResolvedClass]:
                 for cdef in self._dex.class_defs:
                     yield ResolvedClass(ClassLoader([]), self._dex, cdef)
+
+            def __len__(self) -> int:
+                return len(self._dex.class_defs)
 
         custom_elem = CustomElement(dex)
         self.assertIsInstance(custom_elem, ClassLoaderElement)

@@ -207,6 +207,8 @@ class ClassLoaderElement(Protocol):
 
     def __iter__(self) -> Iterator[ResolvedClass]: ...
 
+    def __len__(self) -> int: ...
+
 
 def _get_multidex_names(zip_archive: ZipArchive) -> list[str]:
     names: list[tuple[int, str]] = []
@@ -250,6 +252,9 @@ class DexAdapter:
         for cdef in self._dex.class_defs:
             yield ResolvedClass(self._loader, self._dex, cdef)
 
+    def __len__(self) -> int:
+        return len(self._dex.class_defs)
+
 
 class VdexAdapter:
     """Adapter for wrapping a VdexFile into a ClassLoaderElement."""
@@ -283,6 +288,9 @@ class VdexAdapter:
         for dex in self._vdex.dex_files:
             for cdef in dex.class_defs:
                 yield ResolvedClass(self._loader, dex, cdef)
+
+    def __len__(self) -> int:
+        return sum(len(dex.class_defs) for dex in self._vdex.dex_files)
 
 
 class ZipAdapter:
@@ -320,6 +328,9 @@ class ZipAdapter:
         for dex in self._dex_files:
             for cdef in dex.class_defs:
                 yield ResolvedClass(self._loader, dex, cdef)
+
+    def __len__(self) -> int:
+        return sum(len(dex.class_defs) for dex in self._dex_files)
 
 
 class ClassLoader:
@@ -408,15 +419,11 @@ class ClassLoader:
             return False
 
     def __iter__(self) -> Iterator[ResolvedClass]:
-        seen: set[str] = set()
         for adapter in self._adapters:
-            for cls in adapter:
-                if cls.descriptor not in seen:
-                    seen.add(cls.descriptor)
-                    yield cls
+            yield from adapter
 
     def __len__(self) -> int:
-        return sum(1 for _ in self)
+        return sum(len(adapter) for adapter in self._adapters)
 
     def close(self) -> None:
         """Close tracked resources and child elements."""

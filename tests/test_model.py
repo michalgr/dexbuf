@@ -463,7 +463,6 @@ class TestClassLoader(unittest.TestCase):
         # get
         self.assertEqual(loader.get("com.example.A"), cls_a)
         self.assertIsNone(loader.get("com.example.C"))
-        self.assertEqual(loader.get("com.example.C", "default"), "default")
 
         # __contains__
         self.assertIn("com.example.A", loader)

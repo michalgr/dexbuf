@@ -49,6 +49,7 @@ class TestSanity(unittest.TestCase):
             "ClassDefItem",
             "ClassLoader",
             "ClassLoaderElement",
+            "ClassLoaderElementInput",
             "CodeItem",
             "Count",
             "DebugInfoItem",

@@ -33,12 +33,10 @@ __all__ = [
 class Class(ABC):
     """Abstract base class representing a Java / Dalvik class or interface."""
 
-    __slots__ = ()
+    __slots__ = ("descriptor",)
 
-    @property
-    @abstractmethod
-    def descriptor(self) -> str:
-        """Dalvik type descriptor (e.g. 'Lcom/example/Foo;')."""
+    def __init__(self, descriptor: str) -> None:
+        self.descriptor: str = descriptor
 
     @property
     @abstractmethod
@@ -80,18 +78,19 @@ class Class(ABC):
 class UnresolvedClass(Class):
     """Represents an external Android SDK, Java runtime, or unprovided library class."""
 
-    __slots__ = ("_descriptor",)
+    __slots__ = ()
 
-    def __init__(self, descriptor_or_name: str) -> None:
-        if not (descriptor_or_name.startswith("L") or descriptor_or_name.startswith("[")):
-            descriptor = type_name_to_descriptor(descriptor_or_name)
+    def __init__(self, descriptor: str) -> None:
+        super().__init__(descriptor)
+
+    @classmethod
+    def from_name_or_descriptor(cls, name_or_descriptor: str) -> Self:
+        """Create an UnresolvedClass from either a Java type name or Dalvik descriptor."""
+        if not (name_or_descriptor.startswith("L") or name_or_descriptor.startswith("[")):
+            descriptor = type_name_to_descriptor(name_or_descriptor)
         else:
-            descriptor = descriptor_or_name
-        self._descriptor: str = descriptor
-
-    @property
-    def descriptor(self) -> str:
-        return self._descriptor
+            descriptor = name_or_descriptor
+        return cls(descriptor)
 
     @property
     def is_resolved(self) -> bool:
@@ -107,6 +106,7 @@ class ResolvedClass(Class):
     __slots__ = ("_def", "_dex", "_loader")
 
     def __init__(self, loader: ClassLoader, dex: DexFile, class_def: ClassDefItem) -> None:
+        super().__init__(dex.get_type_descriptor(class_def.class_idx))
         self._loader: ClassLoader = loader
         self._dex: DexFile = dex
         self._def: ClassDefItem = class_def
@@ -114,10 +114,6 @@ class ResolvedClass(Class):
     @property
     def is_resolved(self) -> bool:
         return True
-
-    @property
-    def descriptor(self) -> str:
-        return self._dex.get_type_descriptor(self._def.class_idx)
 
     @property
     def loader(self) -> ClassLoader:

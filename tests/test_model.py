@@ -171,7 +171,7 @@ def build_vdex_bytes(dex_buffers: list[bytes]) -> bytes:
 
 class TestClassHierarchy(unittest.TestCase):
     def test_unresolved_class_properties_and_normalization(self) -> None:
-        unresolved1 = UnresolvedClass("android.app.Activity")
+        unresolved1 = UnresolvedClass.from_name_or_descriptor("android.app.Activity")
         self.assertFalse(unresolved1.is_resolved)
         self.assertEqual(unresolved1.descriptor, "Landroid/app/Activity;")
         self.assertEqual(unresolved1.name, "android.app.Activity")
@@ -184,11 +184,18 @@ class TestClassHierarchy(unittest.TestCase):
         self.assertEqual(unresolved1, unresolved2)
         self.assertEqual(hash(unresolved1), hash(unresolved2))
 
+        unresolved3 = UnresolvedClass.from_name_or_descriptor("Landroid/app/Activity;")
+        self.assertEqual(unresolved1, unresolved3)
+
         unresolved_arr = UnresolvedClass("[Landroid/app/Activity;")
         self.assertEqual(unresolved_arr.descriptor, "[Landroid/app/Activity;")
         self.assertEqual(unresolved_arr.name, "android.app.Activity[]")
 
-        default_pkg = UnresolvedClass("GlobalClass")
+        unresolved_arr2 = UnresolvedClass.from_name_or_descriptor("[Landroid/app/Activity;")
+        self.assertEqual(unresolved_arr, unresolved_arr2)
+
+        default_pkg = UnresolvedClass.from_name_or_descriptor("GlobalClass")
+        self.assertEqual(default_pkg.descriptor, "LGlobalClass;")
         self.assertEqual(default_pkg.package, "")
         self.assertEqual(default_pkg.simple_name, "GlobalClass")
 
@@ -296,7 +303,7 @@ class TestClassHierarchy(unittest.TestCase):
         loader = ClassLoader([DexFile(dex_bytes)])
         cls1 = loader["com.example.Foo"]
         cls2 = loader["com.example.Foo"]
-        unresolved = UnresolvedClass("com.example.Foo")
+        unresolved = UnresolvedClass.from_name_or_descriptor("com.example.Foo")
 
         self.assertEqual(cls1, cls2)
         self.assertEqual(hash(cls1), hash(cls2))

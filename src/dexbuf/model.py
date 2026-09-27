@@ -8,7 +8,7 @@ import fnmatch
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Buffer, Iterator, Sequence
-from typing import Any, Self, TypeVar
+from typing import Any, Self
 
 from dexbuf.descriptors import descriptor_to_type_name, type_name_to_descriptor
 from dexbuf.dex import DexFile
@@ -28,8 +28,6 @@ __all__ = [
     "load",
     "open",
 ]
-
-T = TypeVar("T")
 
 
 class Class(ABC):
@@ -308,11 +306,8 @@ class ClassLoader:
             raise KeyError(key)
         return cls
 
-    def get(self, key: str, default: T = None) -> ResolvedClass | T:
-        cls = self.load_class(key)
-        if cls is None:
-            return default
-        return cls
+    def get(self, key: str) -> ResolvedClass | None:
+        return self.load_class(key)
 
     def __contains__(self, key: object) -> bool:
         if isinstance(key, Class):

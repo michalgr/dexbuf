@@ -102,6 +102,14 @@ class UnresolvedClass(Class):
     def is_resolved(self) -> bool:
         return False
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, UnresolvedClass):
+            return NotImplemented
+        return self.descriptor == other.descriptor
+
+    def __hash__(self) -> int:
+        return hash((type(self), self.descriptor))
+
     def __repr__(self) -> str:
         return f"<UnresolvedClass {self.name!r}>"
 
@@ -120,6 +128,14 @@ class ResolvedClass(Class):
     @property
     def is_resolved(self) -> bool:
         return True
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ResolvedClass):
+            return NotImplemented
+        return self._loader is other._loader and self.descriptor == other.descriptor
+
+    def __hash__(self) -> int:
+        return hash((type(self), self._loader, self.descriptor))
 
     @property
     def loader(self) -> ClassLoader:

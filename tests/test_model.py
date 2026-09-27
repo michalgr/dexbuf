@@ -305,14 +305,33 @@ class TestClassHierarchy(unittest.TestCase):
         dex_bytes = build_dex_bytes(
             [{"name": "Lcom/example/Foo;", "super": "Ljava/lang/Object;", "access_flags": 1}]
         )
-        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
-        cls1 = loader["com.example.Foo"]
-        cls2 = loader["com.example.Foo"]
-        unresolved = UnresolvedClass.from_name_or_descriptor("com.example.Foo")
+        dex1 = DexFile(dex_bytes)
+        loader1 = ClassLoader.from_elements([dex1])
+        cls1 = loader1["com.example.Foo"]
+        cls2 = loader1["com.example.Foo"]
 
+        dex2 = DexFile(dex_bytes)
+        loader2 = ClassLoader.from_elements([dex2])
+        cls_other_loader = loader2["com.example.Foo"]
+
+        unresolved1 = UnresolvedClass.from_name_or_descriptor("com.example.Foo")
+        unresolved2 = UnresolvedClass("Lcom/example/Foo;")
+
+        # UnresolvedClass equality and hash
+        self.assertEqual(unresolved1, unresolved2)
+        self.assertEqual(hash(unresolved1), hash(unresolved2))
+        self.assertNotEqual(unresolved1, "com.example.Foo")
+
+        # ResolvedClass equality and hash within same ClassLoader
         self.assertEqual(cls1, cls2)
         self.assertEqual(hash(cls1), hash(cls2))
-        self.assertNotEqual(cls1, unresolved)
+
+        # ResolvedClass equality and hash across different ClassLoaders
+        self.assertNotEqual(cls1, cls_other_loader)
+
+        # Cross type comparisons
+        self.assertNotEqual(cls1, unresolved1)
+        self.assertNotEqual(unresolved1, cls1)
         self.assertNotEqual(cls1, "com.example.Foo")
 
 

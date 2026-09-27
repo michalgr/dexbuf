@@ -8,7 +8,7 @@ import fnmatch
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Buffer, Iterator, Sequence
-from typing import Any, Protocol, Self, runtime_checkable
+from typing import Protocol, Self, runtime_checkable
 
 from dexbuf.descriptors import descriptor_to_type_name, type_name_to_descriptor
 from dexbuf.dex import DexFile
@@ -19,10 +19,13 @@ from dexbuf.types import NO_INDEX, NO_OFFSET
 from dexbuf.vdex import VdexFile
 from dexbuf.zip import ZipArchive
 
+type ClassLoaderElementInput = ClassLoaderElement | DexFile | VdexFile | ZipArchive
+
 __all__ = [
     "Class",
     "ClassLoader",
     "ClassLoaderElement",
+    "ClassLoaderElementInput",
     "DexAdapter",
     "ResolvedClass",
     "UnresolvedClass",
@@ -336,32 +339,40 @@ class ZipAdapter:
 class ClassLoader:
     """Interleaved ordered container mirroring Android class-loading semantics."""
 
-    __slots__ = ("_adapters", "_cache", "_resources", "elements")
+    __slots__ = ("_cache", "_resources", "elements")
 
-    def __init__(self, elements: Sequence[Any] | None = None) -> None:
+    def __init__(self, elements: Sequence[ClassLoaderElement] | None = None) -> None:
         if elements is not None:
-            self.elements: tuple[Any, ...] = tuple(elements)
-            adapters: list[ClassLoaderElement] = []
-            for elem in self.elements:
-                if isinstance(elem, ClassLoader):
-                    adapters.append(elem)
-                elif isinstance(elem, DexFile):
-                    adapters.append(DexAdapter(elem, self))
-                elif isinstance(elem, VdexFile):
-                    adapters.append(VdexAdapter(elem, self))
-                elif isinstance(elem, ZipArchive):
-                    adapters.append(ZipAdapter(elem, self))
-                elif isinstance(elem, ClassLoaderElement):
-                    adapters.append(elem)
-                else:
+            for elem in elements:
+                if not isinstance(elem, ClassLoaderElement):
                     raise TypeError(f"Invalid ClassLoaderElement type: {type(elem).__name__}")
-            self._adapters: tuple[ClassLoaderElement, ...] = tuple(adapters)
+            self.elements: tuple[ClassLoaderElement, ...] = tuple(elements)
         else:
             self.elements = ()
-            self._adapters = ()
 
         self._cache: dict[str, ResolvedClass | None] = {}
-        self._resources: list[Any] = []
+        self._resources: list[object] = []
+
+    @classmethod
+    def from_elements(cls, elements: Sequence[ClassLoaderElementInput] | None = None) -> Self:
+        """Create a ClassLoader wrapping raw container objects into adapters where needed."""
+        if elements is None:
+            return cls()
+        loader = cls()
+        adapted: list[ClassLoaderElement] = []
+        for elem in elements:
+            if isinstance(elem, DexFile):
+                adapted.append(DexAdapter(elem, loader))
+            elif isinstance(elem, VdexFile):
+                adapted.append(VdexAdapter(elem, loader))
+            elif isinstance(elem, ZipArchive):
+                adapted.append(ZipAdapter(elem, loader))
+            elif isinstance(elem, ClassLoaderElement):
+                adapted.append(elem)
+            else:
+                raise TypeError(f"Invalid ClassLoaderElement type: {type(elem).__name__}")
+        loader.elements = tuple(adapted)
+        return loader
 
     def load_class(self, descriptor: str) -> ResolvedClass | None:
         """Resolve a class definition by descriptor or Java type name."""
@@ -374,8 +385,8 @@ class ClassLoader:
             return self._cache[desc]
 
         resolved: ResolvedClass | None = None
-        for adapter in self._adapters:
-            res = adapter.load_class(desc)
+        for element in self.elements:
+            res = element.load_class(desc)
             if res is not None:
                 resolved = res
                 break
@@ -391,8 +402,8 @@ class ClassLoader:
             desc = descriptor
 
         results: list[ResolvedClass] = []
-        for adapter in self._adapters:
-            results.extend(adapter.find_all(desc))
+        for element in self.elements:
+            results.extend(element.find_all(desc))
         return results
 
     def find(self, pattern: str) -> list[ResolvedClass]:
@@ -419,11 +430,11 @@ class ClassLoader:
             return False
 
     def __iter__(self) -> Iterator[ResolvedClass]:
-        for adapter in self._adapters:
-            yield from adapter
+        for element in self.elements:
+            yield from element
 
     def __len__(self) -> int:
-        return sum(len(adapter) for adapter in self._adapters)
+        return sum(len(element) for element in self.elements)
 
     def close(self) -> None:
         """Close tracked resources and child elements."""
@@ -440,10 +451,10 @@ class ClassLoader:
                     pass
         self._resources.clear()
 
-        for adapter in self._adapters:
-            if hasattr(adapter, "close"):
+        for element in self.elements:
+            if hasattr(element, "close"):
                 try:
-                    adapter.close()
+                    element.close()  # type: ignore[attr-defined]
                 except Exception:
                     pass
 
@@ -457,7 +468,7 @@ class ClassLoader:
 def load(buffer: Buffer) -> ClassLoader:
     """Detect binary format of buffer and return a ClassLoader wrapping it."""
     view = memoryview(buffer)
-    elem: Any
+    elem: ClassLoaderElementInput
     if len(view) >= 4 and view[:4] == b"dex\n":
         elem = DexFile(buffer)
     elif len(view) >= 2 and view[:2] == b"PK":
@@ -468,7 +479,7 @@ def load(buffer: Buffer) -> ClassLoader:
         magic = bytes(view[:8])
         raise ValueError(f"Unrecognized binary format (magic: {magic!r})")
 
-    return ClassLoader([elem])
+    return ClassLoader.from_elements([elem])
 
 
 def open(path: str | os.PathLike[str], *, mmap: bool = True) -> ClassLoader:

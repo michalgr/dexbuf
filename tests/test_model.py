@@ -221,7 +221,7 @@ class TestClassHierarchy(unittest.TestCase):
             ]
         )
         dex = DexFile(dex_bytes)
-        loader = ClassLoader([dex])
+        loader = ClassLoader.from_elements([dex])
 
         cls = loader.load_class("com.example.Foo")
         self.assertIsNotNone(cls)
@@ -266,7 +266,7 @@ class TestClassHierarchy(unittest.TestCase):
             ]
         )
         dex = DexFile(dex_bytes)
-        loader = ClassLoader([dex])
+        loader = ClassLoader.from_elements([dex])
 
         child = loader["com.example.Child"]
         parent = child.super_class
@@ -297,7 +297,7 @@ class TestClassHierarchy(unittest.TestCase):
                 }
             ]
         )
-        loader = ClassLoader([DexFile(dex_bytes)])
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
         obj_cls = loader["java.lang.Object"]
         self.assertIsNone(obj_cls.super_class)
 
@@ -305,7 +305,7 @@ class TestClassHierarchy(unittest.TestCase):
         dex_bytes = build_dex_bytes(
             [{"name": "Lcom/example/Foo;", "super": "Ljava/lang/Object;", "access_flags": 1}]
         )
-        loader = ClassLoader([DexFile(dex_bytes)])
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
         cls1 = loader["com.example.Foo"]
         cls2 = loader["com.example.Foo"]
         unresolved = UnresolvedClass.from_name_or_descriptor("com.example.Foo")
@@ -326,8 +326,40 @@ class TestClassLoader(unittest.TestCase):
                 [{"name": "Lcom/example/Foo;", "super": "Ljava/lang/Object;", "access_flags": 1}]
             )
         )
-        loader = ClassLoader([dex])
+        vdex_bytes = build_vdex_bytes([build_dex_bytes([])])
+        vdex = VdexFile(vdex_bytes)
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+            zf.writestr("classes.dex", build_dex_bytes([]))
+        zip_archive = ZipArchive(buf.getvalue())
+
+        # ClassLoader.__init__ strictly rejects raw unadapted containers
+        with self.assertRaises(TypeError):
+            ClassLoader([dex])  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            ClassLoader([vdex])  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            ClassLoader([zip_archive])  # type: ignore[arg-type]
+
+        # ClassLoader.from_elements wraps raw containers into adapters
+        loader = ClassLoader.from_elements([dex])
         self.assertFalse(hasattr(loader, "dex_files"))
+        self.assertEqual(len(loader.elements), 1)
+        self.assertIsInstance(loader.elements[0], DexAdapter)
+
+        # Direct ClassLoader instantiation with ClassLoaderElement
+        adapter = DexAdapter(dex, loader)
+        strict_loader = ClassLoader([adapter])
+        self.assertEqual(strict_loader.elements, (adapter,))
+
+        # Nested ClassLoader as element
+        nested_loader = ClassLoader([strict_loader])
+        self.assertEqual(nested_loader.elements, (strict_loader,))
+
+        # from_elements rejects invalid types
+        with self.assertRaises(TypeError):
+            ClassLoader.from_elements(["invalid_path_str"])  # type: ignore[arg-type]
 
     def test_resolution_order_parent_first_self_first_interleaved(self) -> None:
         parent_dex = DexFile(
@@ -355,20 +387,20 @@ class TestClassLoader(unittest.TestCase):
             )
         )
 
-        parent_loader = ClassLoader([parent_dex])
+        parent_loader = ClassLoader.from_elements([parent_dex])
 
         # Parent-first loader
-        parent_first = ClassLoader([parent_loader, child_dex])
+        parent_first = ClassLoader.from_elements([parent_loader, child_dex])
         foo_pf = parent_first["com.example.Foo"]
         self.assertEqual(foo_pf.source_file, "ParentFoo.java")
 
         # Self-first loader
-        self_first = ClassLoader([child_dex, parent_loader])
+        self_first = ClassLoader.from_elements([child_dex, parent_loader])
         foo_sf = self_first["com.example.Foo"]
         self.assertEqual(foo_sf.source_file, "ChildFoo.java")
 
         # Interleaved loader
-        interleaved = ClassLoader([parent_dex, parent_loader, child_dex])
+        interleaved = ClassLoader.from_elements([parent_dex, parent_loader, child_dex])
         foo_il = interleaved["com.example.Foo"]
         self.assertEqual(foo_il.source_file, "ParentFoo.java")
 
@@ -378,7 +410,7 @@ class TestClassLoader(unittest.TestCase):
                 [{"name": "Lcom/example/Foo;", "super": "Ljava/lang/Object;", "access_flags": 1}]
             )
         )
-        loader = ClassLoader([dex])
+        loader = ClassLoader.from_elements([dex])
 
         cls1 = loader.load_class("com.example.Foo")
         cls2 = loader.load_class("Lcom/example/Foo;")
@@ -416,7 +448,7 @@ class TestClassLoader(unittest.TestCase):
             )
         )
 
-        loader = ClassLoader([dex1, dex2])
+        loader = ClassLoader.from_elements([dex1, dex2])
         all_foos = loader.find_all("com.example.Foo")
         self.assertEqual(len(all_foos), 2)
         self.assertEqual(all_foos[0].source_file, "Foo1.java")
@@ -450,7 +482,7 @@ class TestClassLoader(unittest.TestCase):
                 ]
             )
         )
-        loader = ClassLoader([dex])
+        loader = ClassLoader.from_elements([dex])
 
         activities = loader.find("*.Activity")
         # Simple name ends with Activity, but full name is com.example.*Activity
@@ -470,7 +502,7 @@ class TestClassLoader(unittest.TestCase):
                 ]
             )
         )
-        loader = ClassLoader([dex])
+        loader = ClassLoader.from_elements([dex])
 
         # __getitem__
         cls_a = loader["com.example.A"]
@@ -502,7 +534,7 @@ class TestClassLoader(unittest.TestCase):
         )
         res_mock = io.BytesIO(b"data")
 
-        with ClassLoader([dex]) as loader:
+        with ClassLoader.from_elements([dex]) as loader:
             loader._resources.append(res_mock)
             self.assertFalse(res_mock.closed)
 
@@ -530,7 +562,7 @@ class TestMultiDexAndContainers(unittest.TestCase):
             zf.writestr("classes2.dex", dex2)
 
         zip_archive = ZipArchive(buf.getvalue())
-        loader = ClassLoader([zip_archive])
+        loader = ClassLoader.from_elements([zip_archive])
 
         derived = loader["com.example.Derived"]
         base = derived.super_class
@@ -546,7 +578,7 @@ class TestMultiDexAndContainers(unittest.TestCase):
         vdex_bytes = build_vdex_bytes([dex1])
         vdex = VdexFile(vdex_bytes)
 
-        loader = ClassLoader([vdex])
+        loader = ClassLoader.from_elements([vdex])
         cls = loader["com.example.VdexClass"]
         self.assertEqual(cls.name, "com.example.VdexClass")
 
@@ -601,7 +633,7 @@ class TestAdaptersAndCustomElements(unittest.TestCase):
             [{"name": "Lcom/example/Foo;", "super": "Ljava/lang/Object;", "access_flags": 1}]
         )
         dex = DexFile(dex_bytes)
-        loader = ClassLoader([dex])
+        loader = ClassLoader.from_elements([dex])
 
         vdex_bytes = build_vdex_bytes([dex_bytes])
         vdex = VdexFile(vdex_bytes)
@@ -625,7 +657,7 @@ class TestAdaptersAndCustomElements(unittest.TestCase):
             [{"name": "Lcom/example/Foo;", "super": "Ljava/lang/Object;", "access_flags": 1}]
         )
         dex = DexFile(dex_bytes)
-        loader = ClassLoader([dex])
+        loader = ClassLoader.from_elements([dex])
 
         vdex_bytes = build_vdex_bytes([dex_bytes])
         vdex = VdexFile(vdex_bytes)
@@ -678,7 +710,7 @@ class TestAdaptersAndCustomElements(unittest.TestCase):
                 cdef = self._dex.find_class_def(descriptor)
                 if cdef is not None:
                     # Construct dummy ResolvedClass with dummy loader
-                    return ResolvedClass(ClassLoader([]), self._dex, cdef)
+                    return ResolvedClass(ClassLoader(), self._dex, cdef)
                 return None
 
             def find_all(self, descriptor: str) -> Sequence[ResolvedClass]:
@@ -687,7 +719,7 @@ class TestAdaptersAndCustomElements(unittest.TestCase):
 
             def __iter__(self) -> Iterator[ResolvedClass]:
                 for cdef in self._dex.class_defs:
-                    yield ResolvedClass(ClassLoader([]), self._dex, cdef)
+                    yield ResolvedClass(ClassLoader(), self._dex, cdef)
 
             def __len__(self) -> int:
                 return len(self._dex.class_defs)

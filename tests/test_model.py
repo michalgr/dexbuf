@@ -8,15 +8,20 @@ import tempfile
 import unittest
 import zipfile
 import zlib
+from collections.abc import Iterator, Sequence
 from typing import Any
 
 from dexbuf import (
     AccessFlags,
     ClassLoader,
+    ClassLoaderElement,
+    DexAdapter,
     DexFile,
     ResolvedClass,
     UnresolvedClass,
+    VdexAdapter,
     VdexFile,
+    ZipAdapter,
     ZipArchive,
     load,
     open,
@@ -582,6 +587,109 @@ class TestTopLevelEntryPoints(unittest.TestCase):
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+
+
+class TestAdaptersAndCustomElements(unittest.TestCase):
+    def test_adapters_protocol_conformance(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [{"name": "Lcom/example/Foo;", "super": "Ljava/lang/Object;", "access_flags": 1}]
+        )
+        dex = DexFile(dex_bytes)
+        loader = ClassLoader([dex])
+
+        vdex_bytes = build_vdex_bytes([dex_bytes])
+        vdex = VdexFile(vdex_bytes)
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+            zf.writestr("classes.dex", dex_bytes)
+        zip_archive = ZipArchive(buf.getvalue())
+
+        dex_adapter = DexAdapter(dex, loader)
+        vdex_adapter = VdexAdapter(vdex, loader)
+        zip_adapter = ZipAdapter(zip_archive, loader)
+
+        self.assertIsInstance(dex_adapter, ClassLoaderElement)
+        self.assertIsInstance(vdex_adapter, ClassLoaderElement)
+        self.assertIsInstance(zip_adapter, ClassLoaderElement)
+        self.assertIsInstance(loader, ClassLoaderElement)
+
+    def test_direct_adapter_queries(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [{"name": "Lcom/example/Foo;", "super": "Ljava/lang/Object;", "access_flags": 1}]
+        )
+        dex = DexFile(dex_bytes)
+        loader = ClassLoader([dex])
+
+        vdex_bytes = build_vdex_bytes([dex_bytes])
+        vdex = VdexFile(vdex_bytes)
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+            zf.writestr("classes.dex", dex_bytes)
+        zip_archive = ZipArchive(buf.getvalue())
+
+        # DexAdapter
+        dex_adapter = DexAdapter(dex, loader)
+        self.assertIs(dex_adapter.dex_file, dex)
+        cls_dex = dex_adapter.load_class("Lcom/example/Foo;")
+        self.assertIsNotNone(cls_dex)
+        self.assertEqual(len(dex_adapter.find_all("Lcom/example/Foo;")), 1)
+        self.assertEqual(len(list(dex_adapter)), 1)
+
+        # VdexAdapter
+        vdex_adapter = VdexAdapter(vdex, loader)
+        self.assertIs(vdex_adapter.vdex_file, vdex)
+        cls_vdex = vdex_adapter.load_class("Lcom/example/Foo;")
+        self.assertIsNotNone(cls_vdex)
+        self.assertEqual(len(vdex_adapter.find_all("Lcom/example/Foo;")), 1)
+        self.assertEqual(len(list(vdex_adapter)), 1)
+
+        # ZipAdapter
+        zip_adapter = ZipAdapter(zip_archive, loader)
+        self.assertIs(zip_adapter.archive, zip_archive)
+        cls_zip = zip_adapter.load_class("Lcom/example/Foo;")
+        self.assertIsNotNone(cls_zip)
+        self.assertEqual(len(zip_adapter.find_all("Lcom/example/Foo;")), 1)
+        self.assertEqual(len(list(zip_adapter)), 1)
+
+    def test_custom_user_element(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [{"name": "Lcom/example/Custom;", "super": "Ljava/lang/Object;", "access_flags": 1}]
+        )
+        dex = DexFile(dex_bytes)
+
+        class CustomElement:
+            __slots__ = ("_dex",)
+
+            def __init__(self, dex_file: DexFile) -> None:
+                self._dex = dex_file
+
+            def load_class(self, descriptor: str) -> ResolvedClass | None:
+                cdef = self._dex.find_class_def(descriptor)
+                if cdef is not None:
+                    # Construct dummy ResolvedClass with dummy loader
+                    return ResolvedClass(ClassLoader([]), self._dex, cdef)
+                return None
+
+            def find_all(self, descriptor: str) -> Sequence[ResolvedClass]:
+                cls = self.load_class(descriptor)
+                return [cls] if cls is not None else []
+
+            def __iter__(self) -> Iterator[ResolvedClass]:
+                for cdef in self._dex.class_defs:
+                    yield ResolvedClass(ClassLoader([]), self._dex, cdef)
+
+        custom_elem = CustomElement(dex)
+        self.assertIsInstance(custom_elem, ClassLoaderElement)
+
+        loader = ClassLoader([custom_elem])
+        cls = loader.load_class("com.example.Custom")
+        self.assertIsNotNone(cls)
+        assert cls is not None
+        self.assertEqual(cls.name, "com.example.Custom")
+        self.assertEqual(len(loader.find_all("com.example.Custom")), 1)
+        self.assertIn("com.example.Custom", loader)
 
 
 if __name__ == "__main__":

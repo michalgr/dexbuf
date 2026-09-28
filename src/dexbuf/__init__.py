@@ -86,6 +86,7 @@ from dexbuf.model import (
     UnresolvedClass,
     VdexAdapter,
     ZipAdapter,
+    is_resolved,
     load,
     open,
 )
@@ -235,6 +236,7 @@ __all__ = [
     "format_field_flags",
     "format_method_descriptor",
     "format_method_flags",
+    "is_resolved",
     "load",
     "open",
     "open_mmap",

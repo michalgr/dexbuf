@@ -8,7 +8,7 @@ import fnmatch
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Buffer, Iterator, Sequence
-from typing import Protocol, Self, runtime_checkable
+from typing import Protocol, Self, TypeIs, runtime_checkable
 
 from dexbuf.descriptors import descriptor_to_type_name, type_name_to_descriptor
 from dexbuf.dex import DexFile
@@ -31,6 +31,7 @@ __all__ = [
     "UnresolvedClass",
     "VdexAdapter",
     "ZipAdapter",
+    "is_resolved",
     "load",
     "open",
 ]
@@ -214,6 +215,11 @@ class ResolvedClass(Class):
 
     def __repr__(self) -> str:
         return f"<Class {self.name!r}>"
+
+
+def is_resolved(cls: Class) -> TypeIs[ResolvedClass]:
+    """Type guard narrowing Class to ResolvedClass (and UnresolvedClass in else branch)."""
+    return isinstance(cls, ResolvedClass)
 
 
 @runtime_checkable

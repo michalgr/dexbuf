@@ -13,6 +13,7 @@ from typing import Any
 
 from dexbuf import (
     AccessFlags,
+    Class,
     ClassLoader,
     ClassLoaderElement,
     DexAdapter,
@@ -23,6 +24,7 @@ from dexbuf import (
     VdexFile,
     ZipAdapter,
     ZipArchive,
+    is_resolved,
     load,
     open,
 )
@@ -175,6 +177,29 @@ def build_vdex_bytes(dex_buffers: list[bytes]) -> bytes:
 
 
 class TestClassHierarchy(unittest.TestCase):
+    def test_is_resolved_type_guard(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [{"name": "Lcom/example/Foo;", "super": "Ljava/lang/Object;", "access_flags": 1}]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        resolved_cls = loader["com.example.Foo"]
+        unresolved_cls = UnresolvedClass("Landroid/app/Activity;")
+
+        self.assertTrue(is_resolved(resolved_cls))
+        self.assertFalse(is_resolved(unresolved_cls))
+
+        # Test type narrowing behavior in conditional branch
+        def check_narrowing(c: Class) -> str:
+            if is_resolved(c):
+                # c is narrowed to ResolvedClass
+                return f"Resolved: {c.dex_file!r}"
+            else:
+                # c is narrowed to UnresolvedClass
+                return f"Unresolved: {c.name}"
+
+        self.assertTrue(check_narrowing(resolved_cls).startswith("Resolved:"))
+        self.assertEqual(check_narrowing(unresolved_cls), "Unresolved: android.app.Activity")
+
     def test_unresolved_class_properties_and_normalization(self) -> None:
         unresolved1 = UnresolvedClass.from_name_or_descriptor("android.app.Activity")
         self.assertFalse(unresolved1.is_resolved)

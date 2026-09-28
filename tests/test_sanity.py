@@ -68,6 +68,7 @@ class TestSanity(unittest.TestCase):
             "EncodedTypeAddrPair",
             "EncodedValue",
             "EndOfCentralDirectoryRecord",
+            "Field",
             "FieldAnnotation",
             "FieldIdItem",
             "Hat",

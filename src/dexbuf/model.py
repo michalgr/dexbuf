@@ -8,14 +8,15 @@ import fnmatch
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Buffer, Iterator, Sequence
-from typing import Protocol, Self, TypeIs, runtime_checkable
+from typing import Any, Protocol, Self, TypeIs, runtime_checkable
 
 from dexbuf.descriptors import descriptor_to_type_name, type_name_to_descriptor
 from dexbuf.dex import DexFile
 from dexbuf.flags import AccessFlags
-from dexbuf.items import ClassDefItem
+from dexbuf.items import ClassDefItem, EncodedField, FieldIdItem
 from dexbuf.mmap import open_mmap
 from dexbuf.types import NO_INDEX, NO_OFFSET
+from dexbuf.value import EncodedArray, EncodedValue, ValueType
 from dexbuf.vdex import VdexFile
 from dexbuf.zip import ZipArchive
 
@@ -27,6 +28,7 @@ __all__ = [
     "ClassLoaderElement",
     "ClassLoaderElementInput",
     "DexAdapter",
+    "Field",
     "ResolvedClass",
     "UnresolvedClass",
     "VdexAdapter",
@@ -35,6 +37,149 @@ __all__ = [
     "load",
     "open",
 ]
+
+
+class Field:
+    """Represents a field definition in a ResolvedClass."""
+
+    __slots__ = ("_cls", "_encoded", "_field_id", "_field_idx", "_initial_value")
+
+    def __init__(
+        self,
+        cls: ResolvedClass,
+        encoded: EncodedField,
+        field_idx: int,
+        field_id: FieldIdItem,
+        initial_value: Any = None,
+    ) -> None:
+        self._cls: ResolvedClass = cls
+        self._encoded: EncodedField = encoded
+        self._field_idx: int = field_idx
+        self._field_id: FieldIdItem = field_id
+        self._initial_value: Any = initial_value
+
+    @property
+    def defining_class(self) -> ResolvedClass:
+        return self._cls
+
+    @property
+    def name(self) -> str:
+        return self._cls.dex_file.get_string(self._field_id.name_idx)
+
+    @property
+    def type_descriptor(self) -> str:
+        return self._cls.dex_file.get_type_descriptor(self._field_id.type_idx)
+
+    @property
+    def type_name(self) -> str:
+        return descriptor_to_type_name(self.type_descriptor)
+
+    @property
+    def type_class(self) -> Class:
+        resolved = self._cls.loader.load_class(self.type_descriptor)
+        if resolved is not None:
+            return resolved
+        return UnresolvedClass(self.type_descriptor)
+
+    @property
+    def type(self) -> Class:
+        return self.type_class
+
+    @property
+    def access_flags(self) -> AccessFlags:
+        return AccessFlags(self._encoded.access_flags)
+
+    @property
+    def initial_value(self) -> Any | None:
+        return self._initial_value
+
+    @property
+    def field_idx(self) -> int:
+        return self._field_idx
+
+    @property
+    def encoded_field(self) -> EncodedField:
+        return self._encoded
+
+    @property
+    def is_static(self) -> bool:
+        return bool(self.access_flags & AccessFlags.STATIC)
+
+    @property
+    def is_public(self) -> bool:
+        return bool(self.access_flags & AccessFlags.PUBLIC)
+
+    @property
+    def is_private(self) -> bool:
+        return bool(self.access_flags & AccessFlags.PRIVATE)
+
+    @property
+    def is_protected(self) -> bool:
+        return bool(self.access_flags & AccessFlags.PROTECTED)
+
+    @property
+    def is_final(self) -> bool:
+        return bool(self.access_flags & AccessFlags.FINAL)
+
+    @property
+    def is_volatile(self) -> bool:
+        return bool(self.access_flags & AccessFlags.VOLATILE)
+
+    @property
+    def is_transient(self) -> bool:
+        return bool(self.access_flags & AccessFlags.TRANSIENT)
+
+    @property
+    def is_synthetic(self) -> bool:
+        return bool(self.access_flags & AccessFlags.SYNTHETIC)
+
+    @property
+    def is_enum(self) -> bool:
+        return bool(self.access_flags & AccessFlags.ENUM)
+
+    def __repr__(self) -> str:
+        return f"<Field '{self._cls.name}.{self.name}: {self.type_name}'>"
+
+    def __str__(self) -> str:
+        return f"{self._cls.name}.{self.name}: {self.type_name}"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Field):
+            return NotImplemented
+        return (
+            self._cls == other._cls
+            and self.name == other.name
+            and self.type_descriptor == other.type_descriptor
+        )
+
+    def __hash__(self) -> int:
+        return hash((type(self), self._cls, self.name, self.type_descriptor))
+
+
+def _decode_encoded_value(dex: DexFile, encoded_value: EncodedValue) -> Any:
+    """Decode an EncodedValue into a high-level Python value."""
+    match encoded_value.value_type:
+        case (
+            ValueType.BYTE
+            | ValueType.SHORT
+            | ValueType.CHAR
+            | ValueType.INT
+            | ValueType.LONG
+            | ValueType.FLOAT
+            | ValueType.DOUBLE
+            | ValueType.BOOLEAN
+            | ValueType.NULL
+        ):
+            return encoded_value.value
+        case ValueType.STRING:
+            return dex.get_string(encoded_value.value)
+        case ValueType.TYPE:
+            return dex.get_type_descriptor(encoded_value.value)
+        case ValueType.ARRAY:
+            array: EncodedArray = encoded_value.value
+            return tuple(_decode_encoded_value(dex, item) for item in array.values)
+        case _:
+            return encoded_value.value
 
 
 class Class(ABC):
@@ -118,13 +263,23 @@ class UnresolvedClass(Class):
 class ResolvedClass(Class):
     """Represents a class definition found in a DEX file."""
 
-    __slots__ = ("_def", "_dex", "_loader")
+    __slots__ = (
+        "_def",
+        "_dex",
+        "_fields",
+        "_instance_fields",
+        "_loader",
+        "_static_fields",
+    )
 
     def __init__(self, loader: ClassLoader, dex: DexFile, class_def: ClassDefItem) -> None:
         super().__init__(dex.get_type_descriptor(class_def.class_idx))
         self._loader: ClassLoader = loader
         self._dex: DexFile = dex
         self._def: ClassDefItem = class_def
+        self._fields: tuple[Field, ...] | None = None
+        self._static_fields: tuple[Field, ...] | None = None
+        self._instance_fields: tuple[Field, ...] | None = None
 
     @property
     def is_resolved(self) -> bool:
@@ -212,6 +367,65 @@ class ResolvedClass(Class):
             else:
                 result.append(UnresolvedClass(desc))
         return tuple(result)
+
+    @property
+    def static_fields(self) -> tuple[Field, ...]:
+        if self._static_fields is not None:
+            return self._static_fields
+
+        if self._def.class_data_off == 0 or self._def.class_data_off == NO_OFFSET:
+            self._static_fields = ()
+            return self._static_fields
+
+        cdata = self._dex.get_class_data(self._def.class_data_off)
+
+        decoded_static_values: tuple[Any, ...] = ()
+        if self._def.static_values_off != 0 and self._def.static_values_off != NO_OFFSET:
+            encoded_array = self._dex.get_static_values(self._def.static_values_off)
+            decoded_static_values = tuple(
+                _decode_encoded_value(self._dex, v) for v in encoded_array.values
+            )
+
+        fields: list[Field] = []
+        for idx, (f_idx, encoded) in enumerate(cdata.iter_static_fields()):
+            val = decoded_static_values[idx] if idx < len(decoded_static_values) else None
+            f_id = self._dex.get_field_id(f_idx)
+            fields.append(Field(self, encoded, f_idx, f_id, val))
+
+        self._static_fields = tuple(fields)
+        return self._static_fields
+
+    @property
+    def instance_fields(self) -> tuple[Field, ...]:
+        if self._instance_fields is not None:
+            return self._instance_fields
+
+        if self._def.class_data_off == 0 or self._def.class_data_off == NO_OFFSET:
+            self._instance_fields = ()
+            return self._instance_fields
+
+        cdata = self._dex.get_class_data(self._def.class_data_off)
+        fields: list[Field] = []
+        for f_idx, encoded in cdata.iter_instance_fields():
+            f_id = self._dex.get_field_id(f_idx)
+            fields.append(Field(self, encoded, f_idx, f_id, None))
+
+        self._instance_fields = tuple(fields)
+        return self._instance_fields
+
+    @property
+    def fields(self) -> tuple[Field, ...]:
+        if self._fields is not None:
+            return self._fields
+        self._fields = self.static_fields + self.instance_fields
+        return self._fields
+
+    def get_field(self, name: str) -> Field | None:
+        """Find the first field in self.fields with matching name."""
+        for field in self.fields:
+            if field.name == name:
+                return field
+        return None
 
     def __repr__(self) -> str:
         return f"<Class {self.name!r}>"

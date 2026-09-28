@@ -18,8 +18,10 @@ from dexbuf import (
     ClassLoaderElement,
     DexAdapter,
     DexFile,
+    EncodedValue,
     ResolvedClass,
     UnresolvedClass,
+    ValueType,
     VdexAdapter,
     VdexFile,
     ZipAdapter,
@@ -28,12 +30,19 @@ from dexbuf import (
     load,
     open,
 )
+from dexbuf.leb128 import encode_uleb128
 from dexbuf.mutf8 import encode_mutf8
+
+
+def _encode_uleb128(val: int) -> bytearray:
+    return bytearray(encode_uleb128(val))
 
 
 def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
     """Build a minimal valid DEX binary buffer for testing."""
     raw_strings = {"V"}
+    field_defs: list[dict[str, Any]] = []
+
     for c in classes:
         raw_strings.add(c["name"])
         if c.get("super"):
@@ -42,11 +51,37 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
             raw_strings.add(iface)
         if c.get("source_file"):
             raw_strings.add(c["source_file"])
+
+        for f in c.get("static_fields", []):
+            raw_strings.add(f["name"])
+            raw_strings.add(f["type"])
+            field_defs.append({"class": c["name"], "name": f["name"], "type": f["type"]})
+            if isinstance(f.get("value"), EncodedValue):
+                ev: EncodedValue = f["value"]
+                if ev.value_type == ValueType.STRING:
+                    raw_strings.add(ev.value)
+                elif ev.value_type == ValueType.TYPE:
+                    raw_strings.add(ev.value)
+
+        for f in c.get("instance_fields", []):
+            raw_strings.add(f["name"])
+            raw_strings.add(f["type"])
+            field_defs.append({"class": c["name"], "name": f["name"], "type": f["type"]})
+
     strings = sorted(raw_strings)
     str_map = {s: i for i, s in enumerate(strings)}
 
-    type_descs = sorted({s for s in strings if s.startswith("L") or s.startswith("[") or s == "V"})
+    primitives = {"V", "Z", "B", "S", "C", "I", "J", "F", "D"}
+    type_descs = sorted(
+        {s for s in strings if s in primitives or s.startswith("L") or s.startswith("[")}
+    )
     type_map = {t: i for i, t in enumerate(type_descs)}
+
+    field_ids_sorted = sorted(
+        field_defs,
+        key=lambda f: (type_map[f["class"]], str_map[f["name"]], type_map[f["type"]]),
+    )
+    field_id_map = {(f["class"], f["name"], f["type"]): i for i, f in enumerate(field_ids_sorted)}
 
     data = bytearray()
 
@@ -55,16 +90,7 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
         str_offsets.append(len(data))
         encoded = encode_mutf8(s, null_terminated=True)
         utf16_len = len(s)
-        uleb = bytearray()
-        val = utf16_len
-        while True:
-            b = val & 0x7F
-            val >>= 7
-            if val > 0:
-                uleb.append(b | 0x80)
-            else:
-                uleb.append(b)
-                break
+        uleb = _encode_uleb128(utf16_len)
         data.extend(uleb)
         data.extend(encoded)
 
@@ -81,10 +107,68 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
             if len(ifaces) % 2 == 1:
                 data.extend(struct.pack("<H", 0))
 
+    class_data_offsets = {}
+    static_values_offsets = {}
+
+    for c in classes:
+        s_fields = sorted(
+            c.get("static_fields", []),
+            key=lambda f: field_id_map[(c["name"], f["name"], f["type"])],
+        )
+        i_fields = sorted(
+            c.get("instance_fields", []),
+            key=lambda f: field_id_map[(c["name"], f["name"], f["type"])],
+        )
+        if s_fields or i_fields:
+            class_data_offsets[c["name"]] = len(data)
+            data.extend(_encode_uleb128(len(s_fields)))
+            data.extend(_encode_uleb128(len(i_fields)))
+            data.extend(_encode_uleb128(0))  # direct_methods
+            data.extend(_encode_uleb128(0))  # virtual_methods
+
+            prev_idx = 0
+            for f in s_fields:
+                abs_idx = field_id_map[(c["name"], f["name"], f["type"])]
+                diff = abs_idx - prev_idx
+                prev_idx = abs_idx
+                data.extend(_encode_uleb128(diff))
+                data.extend(_encode_uleb128(f.get("access_flags", 1)))
+
+            prev_idx = 0
+            for f in i_fields:
+                abs_idx = field_id_map[(c["name"], f["name"], f["type"])]
+                diff = abs_idx - prev_idx
+                prev_idx = abs_idx
+                data.extend(_encode_uleb128(diff))
+                data.extend(_encode_uleb128(f.get("access_flags", 1)))
+
+        static_vals = [
+            f["value"] for f in s_fields if "value" in f and isinstance(f["value"], EncodedValue)
+        ]
+        if static_vals:
+            static_values_offsets[c["name"]] = len(data)
+            data.extend(_encode_uleb128(len(static_vals)))
+            for ev in static_vals:
+                if ev.value_type in (ValueType.STRING, ValueType.TYPE):
+                    idx_val = (
+                        str_map[ev.value]
+                        if ev.value_type == ValueType.STRING
+                        else type_map[ev.value]
+                    )
+                    ev_with_idx = EncodedValue(
+                        value_arg=ev.value_arg,
+                        value_type=ev.value_type,
+                        value=idx_val,
+                    )
+                    data.extend(ev_with_idx.to_bytes())
+                else:
+                    data.extend(ev.to_bytes())
+
     header_size = 0x70
     str_ids_off = header_size
     type_ids_off = str_ids_off + len(strings) * 4
-    class_defs_off = type_ids_off + len(type_descs) * 4
+    field_ids_off = type_ids_off + len(type_descs) * 4
+    class_defs_off = field_ids_off + len(field_ids_sorted) * 8
     data_off = class_defs_off + len(classes) * 32
 
     abs_data_start = data_off
@@ -98,13 +182,31 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
     for tdesc in type_descs:
         buf.extend(struct.pack("<I", str_map[tdesc]))
 
+    for f in field_ids_sorted:
+        buf.extend(
+            struct.pack(
+                "<HHI",
+                type_map[f["class"]],
+                type_map[f["type"]],
+                str_map[f["name"]],
+            )
+        )
+
     for c in classes:
         c_idx = type_map[c["name"]]
         flags = c.get("access_flags", 1)
         s_idx = type_map[c["super"]] if c.get("super") else 0xFFFF_FFFF
         i_off = abs_data_start + iface_offsets[c["name"]] if c["name"] in iface_offsets else 0
         sf_idx = str_map[c["source_file"]] if c.get("source_file") else 0xFFFF_FFFF
-        buf.extend(struct.pack("<8I", c_idx, flags, s_idx, i_off, sf_idx, 0, 0, 0))
+        cd_off = (
+            abs_data_start + class_data_offsets[c["name"]] if c["name"] in class_data_offsets else 0
+        )
+        sv_off = (
+            abs_data_start + static_values_offsets[c["name"]]
+            if c["name"] in static_values_offsets
+            else 0
+        )
+        buf.extend(struct.pack("<8I", c_idx, flags, s_idx, i_off, sf_idx, 0, cd_off, sv_off))
 
     buf.extend(data)
 
@@ -116,6 +218,7 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
         (0x0000, 1, 0),
         (0x0001, len(strings), str_ids_off),
         (0x0002, len(type_descs), type_ids_off),
+        (0x0004, len(field_ids_sorted), field_ids_off),
         (0x0006, len(classes), class_defs_off),
         (0x1000, 1, map_off),
     ]
@@ -133,9 +236,27 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
     )
     struct.pack_into("<I", buf, 0x34, map_off)
     struct.pack_into(
-        "<IIIIII", buf, 0x38, len(strings), str_ids_off, len(type_descs), type_ids_off, 0, 0
+        "<IIIIII",
+        buf,
+        0x38,
+        len(strings),
+        str_ids_off,
+        len(type_descs),
+        type_ids_off,
+        0,
+        0,
     )
-    struct.pack_into("<IIIIII", buf, 0x50, 0, 0, 0, 0, len(classes), class_defs_off)
+    struct.pack_into(
+        "<IIIIII",
+        buf,
+        0x50,
+        len(field_ids_sorted),
+        field_ids_off,
+        0,
+        0,
+        len(classes),
+        class_defs_off,
+    )
     struct.pack_into("<II", buf, 0x68, data_size, abs_data_start)
 
     sig = hashlib.sha1(buf[32:]).digest()
@@ -778,6 +899,239 @@ class TestAdaptersAndCustomElements(unittest.TestCase):
         self.assertEqual(cls.name, "com.example.Custom")
         self.assertEqual(len(loader.find_all("com.example.Custom")), 1)
         self.assertIn("com.example.Custom", loader)
+
+
+class TestFieldDomainModel(unittest.TestCase):
+    def test_class_without_fields(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [{"name": "Lcom/example/NoFields;", "super": "Ljava/lang/Object;", "access_flags": 1}]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.NoFields"]
+
+        self.assertEqual(cls.fields, ())
+        self.assertEqual(cls.static_fields, ())
+        self.assertEqual(cls.instance_fields, ())
+        self.assertIsNone(cls.get_field("any"))
+
+    def test_static_and_instance_fields(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/Foo;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "static_fields": [
+                        {
+                            "name": "TAG",
+                            "type": "Ljava/lang/String;",
+                            "access_flags": int(
+                                AccessFlags.PUBLIC
+                                | AccessFlags.STATIC
+                                | AccessFlags.FINAL
+                                | AccessFlags.SYNTHETIC
+                            ),
+                            "value": EncodedValue(
+                                value_arg=0, value_type=ValueType.STRING, value="FOO_TAG"
+                            ),
+                        }
+                    ],
+                    "instance_fields": [
+                        {
+                            "name": "count",
+                            "type": "I",
+                            "access_flags": int(
+                                AccessFlags.PRIVATE | AccessFlags.VOLATILE | AccessFlags.TRANSIENT
+                            ),
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.Foo"]
+
+        self.assertEqual(len(cls.fields), 2)
+        self.assertEqual(len(cls.static_fields), 1)
+        self.assertEqual(len(cls.instance_fields), 1)
+
+        f_tag = cls.get_field("TAG")
+        self.assertIsNotNone(f_tag)
+        assert f_tag is not None
+
+        self.assertEqual(f_tag.defining_class, cls)
+        self.assertEqual(f_tag.name, "TAG")
+        self.assertEqual(f_tag.type_descriptor, "Ljava/lang/String;")
+        self.assertEqual(f_tag.type_name, "java.lang.String")
+        self.assertTrue(f_tag.is_static)
+        self.assertTrue(f_tag.is_public)
+        self.assertFalse(f_tag.is_private)
+        self.assertFalse(f_tag.is_protected)
+        self.assertTrue(f_tag.is_final)
+        self.assertFalse(f_tag.is_volatile)
+        self.assertFalse(f_tag.is_transient)
+        self.assertTrue(f_tag.is_synthetic)
+        self.assertFalse(f_tag.is_enum)
+        self.assertEqual(f_tag.initial_value, "FOO_TAG")
+        self.assertEqual(repr(f_tag), "<Field 'com.example.Foo.TAG: java.lang.String'>")
+        self.assertEqual(str(f_tag), "com.example.Foo.TAG: java.lang.String")
+
+        f_count = cls.get_field("count")
+        self.assertIsNotNone(f_count)
+        assert f_count is not None
+
+        self.assertEqual(f_count.name, "count")
+        self.assertEqual(f_count.type_descriptor, "I")
+        self.assertEqual(f_count.type_name, "int")
+        self.assertFalse(f_count.is_static)
+        self.assertTrue(f_count.is_private)
+        self.assertTrue(f_count.is_volatile)
+        self.assertTrue(f_count.is_transient)
+        self.assertIsNone(f_count.initial_value)
+
+    def test_field_type_resolution(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/Holder;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "instance_fields": [
+                        {"name": "resolvedRef", "type": "Lcom/example/Target;", "access_flags": 1},
+                        {
+                            "name": "unresolvedRef",
+                            "type": "Landroid/app/Activity;",
+                            "access_flags": 1,
+                        },
+                        {"name": "primitiveInt", "type": "I", "access_flags": 1},
+                    ],
+                },
+                {
+                    "name": "Lcom/example/Target;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                },
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        holder = loader["com.example.Holder"]
+
+        f_res = holder.get_field("resolvedRef")
+        assert f_res is not None
+        self.assertIsInstance(f_res.type_class, ResolvedClass)
+        self.assertEqual(f_res.type_class.name, "com.example.Target")
+        self.assertIs(f_res.type, f_res.type_class)
+
+        f_unres = holder.get_field("unresolvedRef")
+        assert f_unres is not None
+        self.assertIsInstance(f_unres.type_class, UnresolvedClass)
+        self.assertEqual(f_unres.type_class.name, "android.app.Activity")
+
+        f_prim = holder.get_field("primitiveInt")
+        assert f_prim is not None
+        self.assertIsInstance(f_prim.type_class, UnresolvedClass)
+        self.assertEqual(f_prim.type_class.name, "int")
+
+    def test_static_initial_values_decoding(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/Values;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "static_fields": [
+                        {
+                            "name": "iVal",
+                            "type": "I",
+                            "access_flags": 0x8,
+                            "value": EncodedValue(value_arg=3, value_type=ValueType.INT, value=42),
+                        },
+                        {
+                            "name": "sVal",
+                            "type": "Ljava/lang/String;",
+                            "access_flags": 0x8,
+                            "value": EncodedValue(
+                                value_arg=0, value_type=ValueType.STRING, value="hello"
+                            ),
+                        },
+                        {
+                            "name": "fVal",
+                            "type": "F",
+                            "access_flags": 0x8,
+                            "value": EncodedValue(
+                                value_arg=3, value_type=ValueType.FLOAT, value=3.14
+                            ),
+                        },
+                        {
+                            "name": "bVal",
+                            "type": "Z",
+                            "access_flags": 0x8,
+                            "value": EncodedValue(
+                                value_arg=1, value_type=ValueType.BOOLEAN, value=True
+                            ),
+                        },
+                        {
+                            "name": "tVal",
+                            "type": "Ljava/lang/Class;",
+                            "access_flags": 0x8,
+                            "value": EncodedValue(
+                                value_arg=0,
+                                value_type=ValueType.TYPE,
+                                value="Lcom/example/Values;",
+                            ),
+                        },
+                        {
+                            "name": "uninitVal",
+                            "type": "I",
+                            "access_flags": 0x8,
+                        },
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.Values"]
+
+        self.assertEqual(cls.get_field("iVal").initial_value, 42)  # type: ignore[union-attr]
+        self.assertEqual(cls.get_field("sVal").initial_value, "hello")  # type: ignore[union-attr]
+        self.assertAlmostEqual(cls.get_field("fVal").initial_value, 3.14, places=4)  # type: ignore[union-attr]
+        self.assertEqual(cls.get_field("bVal").initial_value, True)  # type: ignore[union-attr]
+        self.assertEqual(cls.get_field("tVal").initial_value, "Lcom/example/Values;")  # type: ignore[union-attr]
+        self.assertIsNone(cls.get_field("uninitVal").initial_value)  # type: ignore[union-attr]
+
+    def test_field_equality_and_hash(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/Foo;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "instance_fields": [
+                        {"name": "fieldA", "type": "I", "access_flags": 1},
+                        {"name": "fieldB", "type": "I", "access_flags": 1},
+                    ],
+                }
+            ]
+        )
+        loader1 = ClassLoader.from_elements([DexFile(dex_bytes)])
+        loader2 = ClassLoader.from_elements([DexFile(dex_bytes)])
+
+        cls1 = loader1["com.example.Foo"]
+        cls2 = loader2["com.example.Foo"]
+
+        f1_a = cls1.get_field("fieldA")
+        f1_a_again = cls1.get_field("fieldA")
+        f1_b = cls1.get_field("fieldB")
+        f2_a = cls2.get_field("fieldA")
+
+        assert f1_a is not None and f1_a_again is not None and f1_b is not None and f2_a is not None
+
+        self.assertEqual(f1_a, f1_a_again)
+        self.assertEqual(hash(f1_a), hash(f1_a_again))
+
+        self.assertNotEqual(f1_a, f1_b)
+        self.assertNotEqual(f1_a, f2_a)  # Different loader identity on defining class
+        self.assertNotEqual(f1_a, "not_a_field")
 
 
 if __name__ == "__main__":

@@ -31,6 +31,7 @@ class TestSanity(unittest.TestCase):
             "VDEX_FILE_MAGIC",
             "VDEX_INVALID_MAGIC",
             "AccessFlags",
+            "Annotation",
             "AnnotationElement",
             "AnnotationItem",
             "AnnotationOffItem",

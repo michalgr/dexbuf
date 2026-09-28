@@ -13,6 +13,8 @@ from typing import Any
 
 from dexbuf import (
     AccessFlags,
+    Annotation,
+    AnnotationVisibility,
     Class,
     ClassLoader,
     ClassLoaderElement,
@@ -65,20 +67,33 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
         if c.get("source_file"):
             raw_strings.add(c["source_file"])
 
+        def _collect_ann(ann_list: list[dict[str, Any]]) -> None:
+            for ann in ann_list:
+                raw_strings.add(ann["type"])
+                for ename, evalue in ann.get("elements", {}).items():
+                    raw_strings.add(ename)
+                    if isinstance(evalue, EncodedValue) and evalue.value_type in (
+                        ValueType.STRING,
+                        ValueType.TYPE,
+                    ):
+                        raw_strings.add(evalue.value)
+
+        _collect_ann(c.get("annotations", []))
+
         for f in c.get("static_fields", []):
             raw_strings.add(f["name"])
             raw_strings.add(f["type"])
+            _collect_ann(f.get("annotations", []))
             field_defs.append({"class": c["name"], "name": f["name"], "type": f["type"]})
             if isinstance(f.get("value"), EncodedValue):
                 ev: EncodedValue = f["value"]
-                if ev.value_type == ValueType.STRING:
-                    raw_strings.add(ev.value)
-                elif ev.value_type == ValueType.TYPE:
+                if ev.value_type in (ValueType.STRING, ValueType.TYPE):
                     raw_strings.add(ev.value)
 
         for f in c.get("instance_fields", []):
             raw_strings.add(f["name"])
             raw_strings.add(f["type"])
+            _collect_ann(f.get("annotations", []))
             field_defs.append({"class": c["name"], "name": f["name"], "type": f["type"]})
 
         all_methods = c.get("direct_methods", []) + c.get("virtual_methods", [])
@@ -92,6 +107,9 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
             proto_defs_set.add((ret_type, params))
             shorty = m.get("shorty") or _compute_shorty(ret_type, list(params))
             raw_strings.add(shorty)
+            _collect_ann(m.get("annotations", []))
+            for p_anns in m.get("parameter_annotations", []):
+                _collect_ann(p_anns)
             method_defs.append(
                 {
                     "class": c["name"],
@@ -184,8 +202,125 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
 
     class_data_offsets = {}
     static_values_offsets = {}
+    class_annotations_directory_offsets = {}
+
+    def _encode_annotation_item(ann_spec: dict[str, Any]) -> bytes:
+        type_idx = type_map[ann_spec["type"]]
+        visibility = ann_spec.get("visibility", 1)
+        elems_dict = ann_spec.get("elements", {})
+        elem_bytes = bytearray()
+        for ename, evalue in sorted(elems_dict.items(), key=lambda x: str_map[x[0]]):
+            elem_bytes.extend(_encode_uleb128(str_map[ename]))
+            if isinstance(evalue, EncodedValue) and evalue.value_type in (
+                ValueType.STRING,
+                ValueType.TYPE,
+            ):
+                idx_val = (
+                    str_map[evalue.value]
+                    if evalue.value_type == ValueType.STRING
+                    else type_map[evalue.value]
+                )
+                ev_idx = EncodedValue(
+                    value_arg=evalue.value_arg, value_type=evalue.value_type, value=idx_val
+                )
+                elem_bytes.extend(ev_idx.to_bytes())
+            elif isinstance(evalue, EncodedValue):
+                elem_bytes.extend(evalue.to_bytes())
+
+        encoded_ann = _encode_uleb128(type_idx) + _encode_uleb128(len(elems_dict)) + elem_bytes
+        return bytes([visibility]) + encoded_ann
 
     for c in classes:
+        c_anns = c.get("annotations", [])
+        s_fields = c.get("static_fields", [])
+        i_fields = c.get("instance_fields", [])
+        d_methods = c.get("direct_methods", [])
+        v_methods = c.get("virtual_methods", [])
+
+        has_annotations = bool(
+            c_anns
+            or any(f.get("annotations") for f in s_fields + i_fields)
+            or any(
+                m.get("annotations") or m.get("parameter_annotations")
+                for m in d_methods + v_methods
+            )
+        )
+
+        if has_annotations:
+
+            def _build_annotation_set(ann_list: list[dict[str, Any]]) -> int:
+                if not ann_list:
+                    return 0
+                item_offs = []
+                for ann_spec in ann_list:
+                    item_offs.append(len(data))
+                    data.extend(_encode_annotation_item(ann_spec))
+
+                while len(data) % 4 != 0:
+                    data.append(0)
+                set_off = len(data)
+                data.extend(struct.pack("<I", len(item_offs)))
+                for off in item_offs:
+                    data.extend(struct.pack("<I", abs_data_start + off))
+                return abs_data_start + set_off
+
+            class_set_off = _build_annotation_set(c_anns)
+
+            field_ann_entries = []
+            for f in s_fields + i_fields:
+                f_anns = f.get("annotations", [])
+                if f_anns:
+                    f_idx = field_id_map[(c["name"], f["name"], f["type"])]
+                    f_set_off = _build_annotation_set(f_anns)
+                    field_ann_entries.append((f_idx, f_set_off))
+
+            method_ann_entries = []
+            param_ann_entries = []
+            for m in d_methods + v_methods:
+                proto_key = (m.get("return_type", "V"), tuple(m.get("params", [])))
+                m_idx = method_id_map[(c["name"], m["name"], proto_key)]
+
+                m_anns = m.get("annotations", [])
+                if m_anns:
+                    m_set_off = _build_annotation_set(m_anns)
+                    method_ann_entries.append((m_idx, m_set_off))
+
+                p_anns_list = m.get("parameter_annotations")
+                if p_anns_list:
+                    param_set_offs = []
+                    for p_anns in p_anns_list:
+                        p_set_off = _build_annotation_set(p_anns) if p_anns else 0
+                        param_set_offs.append(p_set_off)
+
+                    while len(data) % 4 != 0:
+                        data.append(0)
+                    ref_list_off = len(data)
+                    data.extend(struct.pack("<I", len(param_set_offs)))
+                    for p_off in param_set_offs:
+                        data.extend(struct.pack("<I", p_off))
+                    param_ann_entries.append((m_idx, abs_data_start + ref_list_off))
+
+            while len(data) % 4 != 0:
+                data.append(0)
+            dir_off = len(data)
+            data.extend(
+                struct.pack(
+                    "<4I",
+                    class_set_off,
+                    len(field_ann_entries),
+                    len(method_ann_entries),
+                    len(param_ann_entries),
+                )
+            )
+            for f_idx, f_off in field_ann_entries:
+                data.extend(struct.pack("<II", f_idx, f_off))
+            for m_idx, m_off in method_ann_entries:
+                data.extend(struct.pack("<II", m_idx, m_off))
+            for m_idx, p_off in param_ann_entries:
+                data.extend(struct.pack("<II", m_idx, p_off))
+
+            class_annotations_directory_offsets[c["name"]] = abs_data_start + dir_off
+
         s_fields = sorted(
             c.get("static_fields", []),
             key=lambda f: field_id_map[(c["name"], f["name"], f["type"])],
@@ -355,7 +490,8 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
             if c["name"] in static_values_offsets
             else 0
         )
-        buf.extend(struct.pack("<8I", c_idx, flags, s_idx, i_off, sf_idx, 0, cd_off, sv_off))
+        ann_off = class_annotations_directory_offsets.get(c["name"], 0)
+        buf.extend(struct.pack("<8I", c_idx, flags, s_idx, i_off, sf_idx, ann_off, cd_off, sv_off))
 
     buf.extend(data)
 
@@ -1645,6 +1781,265 @@ class TestMethodDomainModel(unittest.TestCase):
         self.assertNotEqual(m1_a, m1_b)
         self.assertNotEqual(m1_a, m2_a)  # Different loader identity on defining class
         self.assertNotEqual(m1_a, "not_a_method")
+
+
+class TestAnnotationDomainModel(unittest.TestCase):
+    def test_empty_class_and_items_no_annotations(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/Unannotated;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "instance_fields": [{"name": "myField", "type": "I", "access_flags": 1}],
+                    "virtual_methods": [
+                        {
+                            "name": "myMethod",
+                            "return_type": "V",
+                            "params": ["I", "Ljava/lang/String;"],
+                            "access_flags": 1,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.Unannotated"]
+
+        self.assertEqual(cls.annotations, ())
+        self.assertIsNone(cls.get_annotation("com.example.SomeAnn"))
+        self.assertIsNone(cls.get_annotation("Lcom/example/SomeAnn;"))
+
+        f = cls.get_field("myField")
+        assert f is not None
+        self.assertEqual(f.annotations, ())
+        self.assertIsNone(f.get_annotation("com.example.SomeAnn"))
+
+        m = cls.get_method("myMethod")
+        assert m is not None
+        self.assertEqual(m.annotations, ())
+        self.assertEqual(m.parameter_annotations, ((), ()))
+        self.assertIsNone(m.get_annotation("com.example.SomeAnn"))
+
+    def test_class_annotations_visibility_types_and_elements(self) -> None:
+        str_val = EncodedValue(value_arg=0, value_type=ValueType.STRING, value="hello")
+        int_val = EncodedValue(value_arg=3, value_type=ValueType.INT, value=100)
+
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/AnnotatedClass;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "annotations": [
+                        {
+                            "type": "Lcom/example/RuntimeAnn;",
+                            "visibility": AnnotationVisibility.RUNTIME,
+                            "elements": {"val": str_val, "num": int_val},
+                        },
+                        {
+                            "type": "Lcom/example/BuildAnn;",
+                            "visibility": AnnotationVisibility.BUILD,
+                            "elements": {},
+                        },
+                        {
+                            "type": "Lcom/example/SystemAnn;",
+                            "visibility": AnnotationVisibility.SYSTEM,
+                            "elements": {},
+                        },
+                    ],
+                },
+                {
+                    "name": "Lcom/example/RuntimeAnn;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                },
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.AnnotatedClass"]
+
+        self.assertEqual(len(cls.annotations), 3)
+
+        ann_runtime = cls.get_annotation("com.example.RuntimeAnn")
+        self.assertIsNotNone(ann_runtime)
+        assert ann_runtime is not None
+        self.assertIsInstance(ann_runtime, Annotation)
+
+        self.assertEqual(ann_runtime.type_descriptor, "Lcom/example/RuntimeAnn;")
+        self.assertEqual(ann_runtime.type_name, "com.example.RuntimeAnn")
+        self.assertIsInstance(ann_runtime.type_class, ResolvedClass)
+        self.assertEqual(ann_runtime.type_class.name, "com.example.RuntimeAnn")
+        self.assertIs(ann_runtime.type, ann_runtime.type_class)
+
+        self.assertEqual(ann_runtime.visibility, AnnotationVisibility.RUNTIME)
+        self.assertTrue(ann_runtime.is_runtime)
+        self.assertFalse(ann_runtime.is_build)
+        self.assertFalse(ann_runtime.is_system)
+
+        # Raw item access
+        self.assertEqual(ann_runtime.raw.visibility, AnnotationVisibility.RUNTIME)
+
+        # Element access
+        self.assertEqual(len(ann_runtime), 2)
+        self.assertIn("val", ann_runtime)
+        self.assertIn("num", ann_runtime)
+        self.assertNotIn("missing", ann_runtime)
+
+        self.assertEqual(ann_runtime["val"].value_type, ValueType.STRING)
+        self.assertEqual(ann_runtime.get("num").value, 100)
+        self.assertEqual(ann_runtime.get("missing", 42), 42)
+
+        elem_keys = set(ann_runtime)
+        self.assertEqual(elem_keys, {"val", "num"})
+
+        self.assertEqual(str(ann_runtime), "@com.example.RuntimeAnn")
+        self.assertEqual(repr(ann_runtime), "<Annotation '@com.example.RuntimeAnn'>")
+
+        # Build & System annotations
+        ann_build = cls.get_annotation("Lcom/example/BuildAnn;")
+        assert ann_build is not None
+        self.assertTrue(ann_build.is_build)
+        self.assertFalse(ann_build.is_runtime)
+        self.assertFalse(ann_build.is_system)
+        self.assertIsInstance(ann_build.type_class, UnresolvedClass)
+
+        ann_system = cls.get_annotation("com.example.SystemAnn")
+        assert ann_system is not None
+        self.assertTrue(ann_system.is_system)
+
+    def test_field_annotations(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/FieldClass;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "instance_fields": [
+                        {
+                            "name": "annotatedField",
+                            "type": "I",
+                            "access_flags": 1,
+                            "annotations": [
+                                {
+                                    "type": "Lcom/example/FieldAnn;",
+                                    "visibility": AnnotationVisibility.RUNTIME,
+                                    "elements": {
+                                        "name": EncodedValue(
+                                            value_arg=0, value_type=ValueType.STRING, value="test"
+                                        )
+                                    },
+                                }
+                            ],
+                        },
+                        {"name": "plainField", "type": "I", "access_flags": 1},
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.FieldClass"]
+
+        f_ann = cls.get_field("annotatedField")
+        assert f_ann is not None
+        self.assertEqual(len(f_ann.annotations), 1)
+        ann = f_ann.get_annotation("com.example.FieldAnn")
+        self.assertIsNotNone(ann)
+        assert ann is not None
+        self.assertEqual(ann.type_name, "com.example.FieldAnn")
+
+        f_plain = cls.get_field("plainField")
+        assert f_plain is not None
+        self.assertEqual(f_plain.annotations, ())
+        self.assertIsNone(f_plain.get_annotation("com.example.FieldAnn"))
+
+    def test_method_and_parameter_annotations(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/MethodClass;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "virtual_methods": [
+                        {
+                            "name": "annotatedMethod",
+                            "return_type": "V",
+                            "params": ["I", "Ljava/lang/String;"],
+                            "access_flags": 1,
+                            "annotations": [
+                                {
+                                    "type": "Lcom/example/MethodAnn;",
+                                    "visibility": AnnotationVisibility.RUNTIME,
+                                    "elements": {},
+                                }
+                            ],
+                            "parameter_annotations": [
+                                [
+                                    {
+                                        "type": "Lcom/example/ParamAnn;",
+                                        "visibility": AnnotationVisibility.RUNTIME,
+                                        "elements": {},
+                                    }
+                                ],
+                                [],
+                            ],
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.MethodClass"]
+
+        m = cls.get_method("annotatedMethod")
+        assert m is not None
+
+        # Method annotations
+        self.assertEqual(len(m.annotations), 1)
+        m_ann = m.get_annotation("com.example.MethodAnn")
+        self.assertIsNotNone(m_ann)
+
+        # Parameter annotations
+        param_anns = m.parameter_annotations
+        self.assertEqual(len(param_anns), 2)
+        self.assertEqual(len(param_anns[0]), 1)
+        self.assertEqual(param_anns[0][0].type_name, "com.example.ParamAnn")
+        self.assertEqual(param_anns[1], ())
+
+    def test_annotation_equality_and_hashing(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/Foo;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "annotations": [
+                        {
+                            "type": "Lcom/example/Ann;",
+                            "visibility": AnnotationVisibility.RUNTIME,
+                            "elements": {
+                                "v": EncodedValue(value_arg=3, value_type=ValueType.INT, value=1)
+                            },
+                        }
+                    ],
+                }
+            ]
+        )
+        loader1 = ClassLoader.from_elements([DexFile(dex_bytes)])
+        loader2 = ClassLoader.from_elements([DexFile(dex_bytes)])
+
+        cls1 = loader1["com.example.Foo"]
+        cls2 = loader2["com.example.Foo"]
+
+        ann1 = cls1.annotations[0]
+        ann1_again = cls1.annotations[0]
+        ann2 = cls2.annotations[0]
+
+        self.assertEqual(ann1, ann1_again)
+        self.assertEqual(hash(ann1), hash(ann1_again))
+
+        self.assertNotEqual(ann1, ann2)  # Different loader identity
+        self.assertNotEqual(ann1, "not_an_annotation")
 
 
 if __name__ == "__main__":

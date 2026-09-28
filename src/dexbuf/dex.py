@@ -10,7 +10,10 @@ from typing import Any, overload
 
 from dexbuf.items import (
     REVERSE_ENDIAN_CONSTANT,
+    AnnotationItem,
     AnnotationsDirectoryItem,
+    AnnotationSetItem,
+    AnnotationSetRefList,
     ClassDataItem,
     ClassDefItem,
     CodeItem,
@@ -318,6 +321,26 @@ class DexFile:
         if offset == NO_OFFSET:
             raise ValueError(f"Invalid annotations_directory offset: {offset}")
         return AnnotationsDirectoryItem.from_buffer(self._buffer, offset)
+
+    def get_annotation_set(self, offset: Offset[AnnotationSetItem]) -> AnnotationSetItem:
+        """Parse and return AnnotationSetItem from non-zero offset."""
+        if offset == NO_OFFSET:
+            raise ValueError(f"Invalid annotation_set offset: {offset}")
+        return AnnotationSetItem.from_buffer(self._buffer, offset)
+
+    def get_annotation_item(self, offset: Offset[AnnotationItem]) -> AnnotationItem:
+        """Parse and return AnnotationItem from non-zero offset."""
+        if offset == NO_OFFSET:
+            raise ValueError(f"Invalid annotation_item offset: {offset}")
+        return AnnotationItem.from_buffer(self._buffer, offset)
+
+    def get_annotation_set_ref_list(
+        self, offset: Offset[AnnotationSetRefList]
+    ) -> AnnotationSetRefList:
+        """Parse and return AnnotationSetRefList from non-zero offset."""
+        if offset == NO_OFFSET:
+            raise ValueError(f"Invalid annotation_set_ref_list offset: {offset}")
+        return AnnotationSetRefList.from_buffer(self._buffer, offset)
 
     def get_static_values(self, offset: Offset[EncodedArrayItem]) -> EncodedArray:
         """Parse and return EncodedArray from non-zero offset of EncodedArrayItem."""

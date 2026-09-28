@@ -972,7 +972,10 @@ class TestFieldDomainModel(unittest.TestCase):
         self.assertFalse(f_tag.is_transient)
         self.assertTrue(f_tag.is_synthetic)
         self.assertFalse(f_tag.is_enum)
-        self.assertEqual(f_tag.initial_value, "FOO_TAG")
+        self.assertIsInstance(f_tag.initial_value, EncodedValue)
+        assert f_tag.initial_value is not None
+        self.assertEqual(f_tag.initial_value.value_type, ValueType.STRING)
+        self.assertIsInstance(f_tag.initial_value.value, int)
         self.assertEqual(repr(f_tag), "<Field 'com.example.Foo.TAG: java.lang.String'>")
         self.assertEqual(str(f_tag), "com.example.Foo.TAG: java.lang.String")
 
@@ -1032,7 +1035,13 @@ class TestFieldDomainModel(unittest.TestCase):
         self.assertIsInstance(f_prim.type_class, UnresolvedClass)
         self.assertEqual(f_prim.type_class.name, "int")
 
-    def test_static_initial_values_decoding(self) -> None:
+    def test_static_initial_values(self) -> None:
+        ev_ival = EncodedValue(value_arg=3, value_type=ValueType.INT, value=42)
+        ev_sval = EncodedValue(value_arg=0, value_type=ValueType.STRING, value="hello")
+        ev_fval = EncodedValue(value_arg=3, value_type=ValueType.FLOAT, value=3.14)
+        ev_bval = EncodedValue(value_arg=1, value_type=ValueType.BOOLEAN, value=True)
+        ev_tval = EncodedValue(value_arg=0, value_type=ValueType.TYPE, value="Lcom/example/Values;")
+
         dex_bytes = build_dex_bytes(
             [
                 {
@@ -1044,41 +1053,31 @@ class TestFieldDomainModel(unittest.TestCase):
                             "name": "iVal",
                             "type": "I",
                             "access_flags": 0x8,
-                            "value": EncodedValue(value_arg=3, value_type=ValueType.INT, value=42),
+                            "value": ev_ival,
                         },
                         {
                             "name": "sVal",
                             "type": "Ljava/lang/String;",
                             "access_flags": 0x8,
-                            "value": EncodedValue(
-                                value_arg=0, value_type=ValueType.STRING, value="hello"
-                            ),
+                            "value": ev_sval,
                         },
                         {
                             "name": "fVal",
                             "type": "F",
                             "access_flags": 0x8,
-                            "value": EncodedValue(
-                                value_arg=3, value_type=ValueType.FLOAT, value=3.14
-                            ),
+                            "value": ev_fval,
                         },
                         {
                             "name": "bVal",
                             "type": "Z",
                             "access_flags": 0x8,
-                            "value": EncodedValue(
-                                value_arg=1, value_type=ValueType.BOOLEAN, value=True
-                            ),
+                            "value": ev_bval,
                         },
                         {
                             "name": "tVal",
                             "type": "Ljava/lang/Class;",
                             "access_flags": 0x8,
-                            "value": EncodedValue(
-                                value_arg=0,
-                                value_type=ValueType.TYPE,
-                                value="Lcom/example/Values;",
-                            ),
+                            "value": ev_tval,
                         },
                         {
                             "name": "uninitVal",
@@ -1092,12 +1091,35 @@ class TestFieldDomainModel(unittest.TestCase):
         loader = ClassLoader.from_elements([DexFile(dex_bytes)])
         cls = loader["com.example.Values"]
 
-        self.assertEqual(cls.get_field("iVal").initial_value, 42)  # type: ignore[union-attr]
-        self.assertEqual(cls.get_field("sVal").initial_value, "hello")  # type: ignore[union-attr]
-        self.assertAlmostEqual(cls.get_field("fVal").initial_value, 3.14, places=4)  # type: ignore[union-attr]
-        self.assertEqual(cls.get_field("bVal").initial_value, True)  # type: ignore[union-attr]
-        self.assertEqual(cls.get_field("tVal").initial_value, "Lcom/example/Values;")  # type: ignore[union-attr]
-        self.assertIsNone(cls.get_field("uninitVal").initial_value)  # type: ignore[union-attr]
+        f_ival = cls.get_field("iVal")
+        assert f_ival is not None
+        self.assertIsInstance(f_ival.initial_value, EncodedValue)
+        self.assertEqual(f_ival.initial_value.value_type, ValueType.INT)
+        self.assertEqual(f_ival.initial_value.value, 42)
+
+        f_sval = cls.get_field("sVal")
+        assert f_sval is not None
+        self.assertIsInstance(f_sval.initial_value, EncodedValue)
+        self.assertEqual(f_sval.initial_value.value_type, ValueType.STRING)
+
+        f_fval = cls.get_field("fVal")
+        assert f_fval is not None
+        self.assertIsInstance(f_fval.initial_value, EncodedValue)
+        self.assertEqual(f_fval.initial_value.value_type, ValueType.FLOAT)
+
+        f_bval = cls.get_field("bVal")
+        assert f_bval is not None
+        self.assertIsInstance(f_bval.initial_value, EncodedValue)
+        self.assertEqual(f_bval.initial_value.value_type, ValueType.BOOLEAN)
+
+        f_tval = cls.get_field("tVal")
+        assert f_tval is not None
+        self.assertIsInstance(f_tval.initial_value, EncodedValue)
+        self.assertEqual(f_tval.initial_value.value_type, ValueType.TYPE)
+
+        f_uninit = cls.get_field("uninitVal")
+        assert f_uninit is not None
+        self.assertIsNone(f_uninit.initial_value)
 
     def test_field_equality_and_hash(self) -> None:
         dex_bytes = build_dex_bytes(

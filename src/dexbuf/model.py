@@ -8,7 +8,7 @@ import fnmatch
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Buffer, Iterator, Sequence
-from typing import Any, Protocol, Self, TypeIs, runtime_checkable
+from typing import Protocol, Self, TypeIs, runtime_checkable
 
 from dexbuf.descriptors import descriptor_to_type_name, type_name_to_descriptor
 from dexbuf.dex import DexFile
@@ -16,7 +16,7 @@ from dexbuf.flags import AccessFlags
 from dexbuf.items import ClassDefItem, EncodedField, FieldIdItem
 from dexbuf.mmap import open_mmap
 from dexbuf.types import NO_INDEX, NO_OFFSET
-from dexbuf.value import EncodedArray, EncodedValue, ValueType
+from dexbuf.value import EncodedValue
 from dexbuf.vdex import VdexFile
 from dexbuf.zip import ZipArchive
 
@@ -50,13 +50,13 @@ class Field:
         encoded: EncodedField,
         field_idx: int,
         field_id: FieldIdItem,
-        initial_value: Any = None,
+        initial_value: EncodedValue | None = None,
     ) -> None:
         self._cls: ResolvedClass = cls
         self._encoded: EncodedField = encoded
         self._field_idx: int = field_idx
         self._field_id: FieldIdItem = field_id
-        self._initial_value: Any = initial_value
+        self._initial_value: EncodedValue | None = initial_value
 
     @property
     def defining_class(self) -> ResolvedClass:
@@ -90,7 +90,7 @@ class Field:
         return AccessFlags(self._encoded.access_flags)
 
     @property
-    def initial_value(self) -> Any | None:
+    def initial_value(self) -> EncodedValue | None:
         return self._initial_value
 
     @property
@@ -154,32 +154,6 @@ class Field:
 
     def __hash__(self) -> int:
         return hash((type(self), self._cls, self.name, self.type_descriptor))
-
-
-def _decode_encoded_value(dex: DexFile, encoded_value: EncodedValue) -> Any:
-    """Decode an EncodedValue into a high-level Python value."""
-    match encoded_value.value_type:
-        case (
-            ValueType.BYTE
-            | ValueType.SHORT
-            | ValueType.CHAR
-            | ValueType.INT
-            | ValueType.LONG
-            | ValueType.FLOAT
-            | ValueType.DOUBLE
-            | ValueType.BOOLEAN
-            | ValueType.NULL
-        ):
-            return encoded_value.value
-        case ValueType.STRING:
-            return dex.get_string(encoded_value.value)
-        case ValueType.TYPE:
-            return dex.get_type_descriptor(encoded_value.value)
-        case ValueType.ARRAY:
-            array: EncodedArray = encoded_value.value
-            return tuple(_decode_encoded_value(dex, item) for item in array.values)
-        case _:
-            return encoded_value.value
 
 
 class Class(ABC):
@@ -379,16 +353,14 @@ class ResolvedClass(Class):
 
         cdata = self._dex.get_class_data(self._def.class_data_off)
 
-        decoded_static_values: tuple[Any, ...] = ()
+        static_values: tuple[EncodedValue, ...] = ()
         if self._def.static_values_off != NO_OFFSET:
             encoded_array = self._dex.get_static_values(self._def.static_values_off)
-            decoded_static_values = tuple(
-                _decode_encoded_value(self._dex, v) for v in encoded_array.values
-            )
+            static_values = encoded_array.values
 
         fields: list[Field] = []
         for idx, (f_idx, encoded) in enumerate(cdata.iter_static_fields()):
-            val = decoded_static_values[idx] if idx < len(decoded_static_values) else None
+            val = static_values[idx] if idx < len(static_values) else None
             f_id = self._dex.get_field_id(f_idx)
             fields.append(Field(self, encoded, f_idx, f_id, val))
 

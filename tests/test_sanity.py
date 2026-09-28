@@ -84,6 +84,7 @@ class TestSanity(unittest.TestCase):
             "MapItem",
             "MapItemType",
             "MapList",
+            "Method",
             "MethodAnnotation",
             "MethodHandleItem",
             "MethodIdItem",

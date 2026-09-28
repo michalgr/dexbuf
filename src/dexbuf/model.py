@@ -10,10 +10,22 @@ from abc import ABC, abstractmethod
 from collections.abc import Buffer, Iterator, Sequence
 from typing import Protocol, Self, TypeIs, runtime_checkable
 
-from dexbuf.descriptors import descriptor_to_type_name, type_name_to_descriptor
+from dexbuf.descriptors import (
+    descriptor_to_type_name,
+    format_method_descriptor,
+    type_name_to_descriptor,
+)
 from dexbuf.dex import DexFile
 from dexbuf.flags import AccessFlags
-from dexbuf.items import ClassDefItem, EncodedField, FieldIdItem
+from dexbuf.items import (
+    ClassDefItem,
+    CodeItem,
+    EncodedField,
+    EncodedMethod,
+    FieldIdItem,
+    MethodIdItem,
+    ProtoIdItem,
+)
 from dexbuf.mmap import open_mmap
 from dexbuf.types import NO_INDEX, NO_OFFSET
 from dexbuf.value import EncodedValue
@@ -29,6 +41,7 @@ __all__ = [
     "ClassLoaderElementInput",
     "DexAdapter",
     "Field",
+    "Method",
     "ResolvedClass",
     "UnresolvedClass",
     "VdexAdapter",
@@ -37,6 +50,199 @@ __all__ = [
     "load",
     "open",
 ]
+
+
+class Method:
+    """Represents a method definition in a ResolvedClass."""
+
+    __slots__ = ("_cls", "_encoded", "_is_direct", "_method_id", "_method_idx")
+
+    def __init__(
+        self,
+        cls: ResolvedClass,
+        encoded: EncodedMethod,
+        method_idx: int,
+        method_id: MethodIdItem,
+        is_direct: bool,
+    ) -> None:
+        self._cls: ResolvedClass = cls
+        self._encoded: EncodedMethod = encoded
+        self._method_idx: int = method_idx
+        self._method_id: MethodIdItem = method_id
+        self._is_direct: bool = is_direct
+
+    @property
+    def defining_class(self) -> ResolvedClass:
+        return self._cls
+
+    @property
+    def name(self) -> str:
+        return self._cls.dex_file.get_string(self._method_id.name_idx)
+
+    @property
+    def method_idx(self) -> int:
+        return self._method_idx
+
+    @property
+    def encoded_method(self) -> EncodedMethod:
+        return self._encoded
+
+    @property
+    def method_id(self) -> MethodIdItem:
+        return self._method_id
+
+    @property
+    def is_direct(self) -> bool:
+        return self._is_direct
+
+    @property
+    def is_virtual(self) -> bool:
+        return not self._is_direct
+
+    @property
+    def access_flags(self) -> AccessFlags:
+        return AccessFlags(self._encoded.access_flags)
+
+    @property
+    def proto(self) -> ProtoIdItem:
+        return self._cls.dex_file.get_proto_id(self._method_id.proto_idx)
+
+    @property
+    def shorty(self) -> str:
+        return self._cls.dex_file.get_string(self.proto.shorty_idx)
+
+    @property
+    def return_type_descriptor(self) -> str:
+        return self._cls.dex_file.get_type_descriptor(self.proto.return_type_idx)
+
+    @property
+    def return_type_name(self) -> str:
+        return descriptor_to_type_name(self.return_type_descriptor)
+
+    @property
+    def return_type_class(self) -> Class:
+        resolved = self._cls.loader.load_class(self.return_type_descriptor)
+        if resolved is not None:
+            return resolved
+        return UnresolvedClass(self.return_type_descriptor)
+
+    @property
+    def return_type(self) -> Class:
+        return self.return_type_class
+
+    @property
+    def parameter_type_descriptors(self) -> tuple[str, ...]:
+        if self.proto.parameters_off == NO_OFFSET:
+            return ()
+        type_list = self._cls.dex_file.get_type_list(self.proto.parameters_off)
+        return tuple(
+            self._cls.dex_file.get_type_descriptor(item.type_idx) for item in type_list.list
+        )
+
+    @property
+    def parameter_type_names(self) -> tuple[str, ...]:
+        return tuple(descriptor_to_type_name(d) for d in self.parameter_type_descriptors)
+
+    @property
+    def parameter_types(self) -> tuple[Class, ...]:
+        result: list[Class] = []
+        for desc in self.parameter_type_descriptors:
+            resolved = self._cls.loader.load_class(desc)
+            if resolved is not None:
+                result.append(resolved)
+            else:
+                result.append(UnresolvedClass(desc))
+        return tuple(result)
+
+    @property
+    def descriptor(self) -> str:
+        return format_method_descriptor(
+            self.parameter_type_descriptors, self.return_type_descriptor
+        )
+
+    @property
+    def has_code(self) -> bool:
+        return self._encoded.code_off != NO_OFFSET
+
+    @property
+    def code(self) -> CodeItem | None:
+        if self.has_code:
+            return self._cls.dex_file.get_code_item(self._encoded.code_off)
+        return None
+
+    @property
+    def is_public(self) -> bool:
+        return bool(self.access_flags & AccessFlags.PUBLIC)
+
+    @property
+    def is_private(self) -> bool:
+        return bool(self.access_flags & AccessFlags.PRIVATE)
+
+    @property
+    def is_protected(self) -> bool:
+        return bool(self.access_flags & AccessFlags.PROTECTED)
+
+    @property
+    def is_static(self) -> bool:
+        return bool(self.access_flags & AccessFlags.STATIC)
+
+    @property
+    def is_final(self) -> bool:
+        return bool(self.access_flags & AccessFlags.FINAL)
+
+    @property
+    def is_synchronized(self) -> bool:
+        return bool(self.access_flags & AccessFlags.SYNCHRONIZED)
+
+    @property
+    def is_bridge(self) -> bool:
+        return bool(self.access_flags & AccessFlags.BRIDGE)
+
+    @property
+    def is_varargs(self) -> bool:
+        return bool(self.access_flags & AccessFlags.VARARGS)
+
+    @property
+    def is_native(self) -> bool:
+        return bool(self.access_flags & AccessFlags.NATIVE)
+
+    @property
+    def is_abstract(self) -> bool:
+        return bool(self.access_flags & AccessFlags.ABSTRACT)
+
+    @property
+    def is_strictfp(self) -> bool:
+        return bool(self.access_flags & AccessFlags.STRICTFP)
+
+    @property
+    def is_synthetic(self) -> bool:
+        return bool(self.access_flags & AccessFlags.SYNTHETIC)
+
+    @property
+    def is_constructor(self) -> bool:
+        return bool(self.access_flags & AccessFlags.CONSTRUCTOR) or self.name in (
+            "<init>",
+            "<clinit>",
+        )
+
+    def __repr__(self) -> str:
+        return f"<Method '{self._cls.name}.{self.name}{self.descriptor}'>"
+
+    def __str__(self) -> str:
+        params_str = ", ".join(self.parameter_type_names)
+        return f"{self.return_type_name} {self._cls.name}.{self.name}({params_str})"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Method):
+            return NotImplemented
+        return (
+            self._cls == other._cls
+            and self.name == other.name
+            and self.descriptor == other.descriptor
+        )
+
+    def __hash__(self) -> int:
+        return hash((type(self), self._cls, self.name, self.descriptor))
 
 
 class Field:
@@ -240,10 +446,13 @@ class ResolvedClass(Class):
     __slots__ = (
         "_def",
         "_dex",
+        "_direct_methods",
         "_fields",
         "_instance_fields",
         "_loader",
+        "_methods",
         "_static_fields",
+        "_virtual_methods",
     )
 
     def __init__(self, loader: ClassLoader, dex: DexFile, class_def: ClassDefItem) -> None:
@@ -254,6 +463,9 @@ class ResolvedClass(Class):
         self._fields: tuple[Field, ...] | None = None
         self._static_fields: tuple[Field, ...] | None = None
         self._instance_fields: tuple[Field, ...] | None = None
+        self._direct_methods: tuple[Method, ...] | None = None
+        self._virtual_methods: tuple[Method, ...] | None = None
+        self._methods: tuple[Method, ...] | None = None
 
     @property
     def is_resolved(self) -> bool:
@@ -398,6 +610,69 @@ class ResolvedClass(Class):
             if field.name == name:
                 return field
         return None
+
+    @property
+    def direct_methods(self) -> tuple[Method, ...]:
+        if self._direct_methods is not None:
+            return self._direct_methods
+
+        if self._def.class_data_off == NO_OFFSET:
+            self._direct_methods = ()
+            return self._direct_methods
+
+        cdata = self._dex.get_class_data(self._def.class_data_off)
+        methods: list[Method] = []
+        for m_idx, encoded in cdata.iter_direct_methods():
+            m_id = self._dex.get_method_id(m_idx)
+            methods.append(Method(self, encoded, m_idx, m_id, is_direct=True))
+
+        self._direct_methods = tuple(methods)
+        return self._direct_methods
+
+    @property
+    def virtual_methods(self) -> tuple[Method, ...]:
+        if self._virtual_methods is not None:
+            return self._virtual_methods
+
+        if self._def.class_data_off == NO_OFFSET:
+            self._virtual_methods = ()
+            return self._virtual_methods
+
+        cdata = self._dex.get_class_data(self._def.class_data_off)
+        methods: list[Method] = []
+        for m_idx, encoded in cdata.iter_virtual_methods():
+            m_id = self._dex.get_method_id(m_idx)
+            methods.append(Method(self, encoded, m_idx, m_id, is_direct=False))
+
+        self._virtual_methods = tuple(methods)
+        return self._virtual_methods
+
+    @property
+    def methods(self) -> tuple[Method, ...]:
+        if self._methods is not None:
+            return self._methods
+        self._methods = self.direct_methods + self.virtual_methods
+        return self._methods
+
+    @property
+    def constructors(self) -> tuple[Method, ...]:
+        return tuple(m for m in self.direct_methods if m.is_constructor)
+
+    def get_method(self, name: str, descriptor: str | None = None) -> Method | None:
+        """Find the first method in self.methods matching name and optional descriptor."""
+        if descriptor is not None:
+            for m in self.methods:
+                if m.name == name and m.descriptor == descriptor:
+                    return m
+        else:
+            for m in self.methods:
+                if m.name == name:
+                    return m
+        return None
+
+    def find_methods(self, name: str) -> list[Method]:
+        """Find all methods in self.methods with matching name."""
+        return [m for m in self.methods if m.name == name]
 
     def __repr__(self) -> str:
         return f"<Class {self.name!r}>"

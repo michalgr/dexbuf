@@ -77,6 +77,7 @@ from dexbuf.items import (
 )
 from dexbuf.mmap import open_mmap, scoped_mmap
 from dexbuf.model import (
+    Annotation,
     Class,
     ClassLoader,
     ClassLoaderElement,
@@ -150,6 +151,7 @@ __all__ = [
     "VDEX_FILE_MAGIC",
     "VDEX_INVALID_MAGIC",
     "AccessFlags",
+    "Annotation",
     "AnnotationElement",
     "AnnotationItem",
     "AnnotationOffItem",

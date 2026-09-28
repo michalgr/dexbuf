@@ -8,7 +8,7 @@ import fnmatch
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Buffer, Iterator, Sequence
-from typing import Protocol, Self, TypeIs, runtime_checkable
+from typing import Any, Protocol, Self, TypeIs, runtime_checkable
 
 from dexbuf.descriptors import (
     descriptor_to_type_name,
@@ -18,6 +18,9 @@ from dexbuf.descriptors import (
 from dexbuf.dex import DexFile
 from dexbuf.flags import AccessFlags
 from dexbuf.items import (
+    AnnotationItem,
+    AnnotationSetItem,
+    AnnotationVisibility,
     ClassDefItem,
     CodeItem,
     EncodedField,
@@ -27,7 +30,7 @@ from dexbuf.items import (
     ProtoIdItem,
 )
 from dexbuf.mmap import open_mmap
-from dexbuf.types import NO_INDEX, NO_OFFSET
+from dexbuf.types import NO_INDEX, NO_OFFSET, Offset
 from dexbuf.value import EncodedValue
 from dexbuf.vdex import VdexFile
 from dexbuf.zip import ZipArchive
@@ -35,6 +38,7 @@ from dexbuf.zip import ZipArchive
 type ClassLoaderElementInput = ClassLoaderElement | DexFile | VdexFile | ZipArchive
 
 __all__ = [
+    "Annotation",
     "Class",
     "ClassLoader",
     "ClassLoaderElement",
@@ -52,10 +56,118 @@ __all__ = [
 ]
 
 
+class Annotation:
+    """Represents an annotation attached to a class, field, or method."""
+
+    __slots__ = ("_dex", "_elements", "_item", "_loader")
+
+    def __init__(self, loader: ClassLoader, dex: DexFile, item: AnnotationItem) -> None:
+        self._loader: ClassLoader = loader
+        self._dex: DexFile = dex
+        self._item: AnnotationItem = item
+        self._elements: dict[str, EncodedValue] = {
+            dex.get_string(elem.name_idx): elem.value for elem in item.annotation.elements
+        }
+
+    @property
+    def type_descriptor(self) -> str:
+        return self._dex.get_type_descriptor(self._item.annotation.type_idx)
+
+    @property
+    def type_name(self) -> str:
+        return descriptor_to_type_name(self.type_descriptor)
+
+    @property
+    def type_class(self) -> Class:
+        resolved = self._loader.load_class(self.type_descriptor)
+        if resolved is not None:
+            return resolved
+        return UnresolvedClass(self.type_descriptor)
+
+    @property
+    def type(self) -> Class:
+        return self.type_class
+
+    @property
+    def visibility(self) -> AnnotationVisibility:
+        return AnnotationVisibility(self._item.visibility)
+
+    @property
+    def is_runtime(self) -> bool:
+        return self.visibility == AnnotationVisibility.RUNTIME
+
+    @property
+    def is_build(self) -> bool:
+        return self.visibility == AnnotationVisibility.BUILD
+
+    @property
+    def is_system(self) -> bool:
+        return self.visibility == AnnotationVisibility.SYSTEM
+
+    @property
+    def elements(self) -> dict[str, EncodedValue]:
+        return self._elements
+
+    @property
+    def raw(self) -> AnnotationItem:
+        return self._item
+
+    def __getitem__(self, name: str) -> EncodedValue:
+        return self._elements[name]
+
+    def get(self, name: str, default: Any = None) -> EncodedValue | Any:
+        return self._elements.get(name, default)
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._elements
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._elements)
+
+    def __len__(self) -> int:
+        return len(self._elements)
+
+    def __repr__(self) -> str:
+        return f"<Annotation '@{self.type_name}'>"
+
+    def __str__(self) -> str:
+        return f"@{self.type_name}"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Annotation):
+            return NotImplemented
+        return (
+            type(self) is type(other)
+            and self._loader is other._loader
+            and self.type_descriptor == other.type_descriptor
+            and self.visibility == other.visibility
+            and self.elements == other.elements
+        )
+
+    def __hash__(self) -> int:
+        return hash(
+            (
+                type(self),
+                self._loader,
+                self.type_descriptor,
+                self.visibility,
+                tuple(sorted(self.elements.items())),
+            )
+        )
+
+
 class Method:
     """Represents a method definition in a ResolvedClass."""
 
-    __slots__ = ("_cls", "_encoded", "_is_direct", "_method_id", "_method_idx")
+    __slots__ = (
+        "_annotations",
+        "_cls",
+        "_encoded",
+        "_is_direct",
+        "_method_id",
+        "_method_idx",
+        "_parameter_annotations",
+    )
 
     def __init__(
         self,
@@ -70,6 +182,8 @@ class Method:
         self._method_idx: int = method_idx
         self._method_id: MethodIdItem = method_id
         self._is_direct: bool = is_direct
+        self._annotations: tuple[Annotation, ...] | None = None
+        self._parameter_annotations: tuple[tuple[Annotation, ...], ...] | None = None
 
     @property
     def defining_class(self) -> ResolvedClass:
@@ -225,6 +339,33 @@ class Method:
             "<clinit>",
         )
 
+    @property
+    def annotations(self) -> tuple[Annotation, ...]:
+        if self._annotations is not None:
+            return self._annotations
+        self._annotations = self._cls._get_method_annotations(self._method_idx)
+        return self._annotations
+
+    @property
+    def parameter_annotations(self) -> tuple[tuple[Annotation, ...], ...]:
+        if self._parameter_annotations is not None:
+            return self._parameter_annotations
+        param_count = len(self.parameter_type_descriptors)
+        self._parameter_annotations = self._cls._get_method_parameter_annotations(
+            self._method_idx, param_count
+        )
+        return self._parameter_annotations
+
+    def get_annotation(self, name_or_descriptor: str) -> Annotation | None:
+        if not (name_or_descriptor.startswith("L") or name_or_descriptor.startswith("[")):
+            desc = type_name_to_descriptor(name_or_descriptor)
+        else:
+            desc = name_or_descriptor
+        for ann in self.annotations:
+            if ann.type_descriptor == desc:
+                return ann
+        return None
+
     def __repr__(self) -> str:
         return f"<Method '{self._cls.name}.{self.name}{self.descriptor}'>"
 
@@ -248,7 +389,7 @@ class Method:
 class Field:
     """Represents a field definition in a ResolvedClass."""
 
-    __slots__ = ("_cls", "_encoded", "_field_id", "_field_idx", "_initial_value")
+    __slots__ = ("_annotations", "_cls", "_encoded", "_field_id", "_field_idx", "_initial_value")
 
     def __init__(
         self,
@@ -263,6 +404,7 @@ class Field:
         self._field_idx: int = field_idx
         self._field_id: FieldIdItem = field_id
         self._initial_value: EncodedValue | None = initial_value
+        self._annotations: tuple[Annotation, ...] | None = None
 
     @property
     def defining_class(self) -> ResolvedClass:
@@ -342,6 +484,23 @@ class Field:
     @property
     def is_enum(self) -> bool:
         return bool(self.access_flags & AccessFlags.ENUM)
+
+    @property
+    def annotations(self) -> tuple[Annotation, ...]:
+        if self._annotations is not None:
+            return self._annotations
+        self._annotations = self._cls._get_field_annotations(self._field_idx)
+        return self._annotations
+
+    def get_annotation(self, name_or_descriptor: str) -> Annotation | None:
+        if not (name_or_descriptor.startswith("L") or name_or_descriptor.startswith("[")):
+            desc = type_name_to_descriptor(name_or_descriptor)
+        else:
+            desc = name_or_descriptor
+        for ann in self.annotations:
+            if ann.type_descriptor == desc:
+                return ann
+        return None
 
     def __repr__(self) -> str:
         return f"<Field '{self._cls.name}.{self.name}: {self.type_name}'>"
@@ -444,6 +603,7 @@ class ResolvedClass(Class):
     """Represents a class definition found in a DEX file."""
 
     __slots__ = (
+        "_annotations",
         "_def",
         "_dex",
         "_direct_methods",
@@ -466,6 +626,7 @@ class ResolvedClass(Class):
         self._direct_methods: tuple[Method, ...] | None = None
         self._virtual_methods: tuple[Method, ...] | None = None
         self._methods: tuple[Method, ...] | None = None
+        self._annotations: tuple[Annotation, ...] | None = None
 
     @property
     def is_resolved(self) -> bool:
@@ -673,6 +834,79 @@ class ResolvedClass(Class):
     def find_methods(self, name: str) -> list[Method]:
         """Find all methods in self.methods with matching name."""
         return [m for m in self.methods if m.name == name]
+
+    def _parse_annotation_set(self, offset: Offset[AnnotationSetItem]) -> tuple[Annotation, ...]:
+        if offset == NO_OFFSET:
+            return ()
+        set_item = self._dex.get_annotation_set(offset)
+        result: list[Annotation] = []
+        for entry in set_item.entries:
+            if entry.annotation_off != NO_OFFSET:
+                item = self._dex.get_annotation_item(entry.annotation_off)
+                result.append(Annotation(self._loader, self._dex, item))
+        return tuple(result)
+
+    @property
+    def annotations(self) -> tuple[Annotation, ...]:
+        if self._annotations is not None:
+            return self._annotations
+
+        if self._def.annotations_off == NO_OFFSET:
+            self._annotations = ()
+            return self._annotations
+
+        dir_item = self._dex.get_annotations_directory(self._def.annotations_off)
+        self._annotations = self._parse_annotation_set(dir_item.class_annotations_off)
+        return self._annotations
+
+    def get_annotation(self, name_or_descriptor: str) -> Annotation | None:
+        if not (name_or_descriptor.startswith("L") or name_or_descriptor.startswith("[")):
+            desc = type_name_to_descriptor(name_or_descriptor)
+        else:
+            desc = name_or_descriptor
+        for ann in self.annotations:
+            if ann.type_descriptor == desc:
+                return ann
+        return None
+
+    def _get_field_annotations(self, field_idx: int) -> tuple[Annotation, ...]:
+        if self._def.annotations_off == NO_OFFSET:
+            return ()
+        dir_item = self._dex.get_annotations_directory(self._def.annotations_off)
+        for fa in dir_item.field_annotations:
+            if fa.field_idx == field_idx:
+                return self._parse_annotation_set(fa.annotations_off)
+        return ()
+
+    def _get_method_annotations(self, method_idx: int) -> tuple[Annotation, ...]:
+        if self._def.annotations_off == NO_OFFSET:
+            return ()
+        dir_item = self._dex.get_annotations_directory(self._def.annotations_off)
+        for ma in dir_item.method_annotations:
+            if ma.method_idx == method_idx:
+                return self._parse_annotation_set(ma.annotations_off)
+        return ()
+
+    def _get_method_parameter_annotations(
+        self, method_idx: int, param_count: int
+    ) -> tuple[tuple[Annotation, ...], ...]:
+        if self._def.annotations_off == NO_OFFSET or param_count == 0:
+            return tuple(() for _ in range(param_count))
+        dir_item = self._dex.get_annotations_directory(self._def.annotations_off)
+        for pa in dir_item.parameter_annotations:
+            if pa.method_idx == method_idx:
+                if pa.annotations_off == NO_OFFSET:
+                    break
+                ref_list = self._dex.get_annotation_set_ref_list(pa.annotations_off)
+                result: list[tuple[Annotation, ...]] = []
+                for i in range(param_count):
+                    if i < len(ref_list.list):
+                        ref_item = ref_list.list[i]
+                        result.append(self._parse_annotation_set(ref_item.annotations_off))
+                    else:
+                        result.append(())
+                return tuple(result)
+        return tuple(() for _ in range(param_count))
 
     def __repr__(self) -> str:
         return f"<Class {self.name!r}>"

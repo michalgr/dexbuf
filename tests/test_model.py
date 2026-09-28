@@ -16,6 +16,7 @@ from dexbuf import (
     Class,
     ClassLoader,
     ClassLoaderElement,
+    CodeItem,
     DexAdapter,
     DexFile,
     EncodedValue,
@@ -38,10 +39,22 @@ def _encode_uleb128(val: int) -> bytearray:
     return bytearray(encode_uleb128(val))
 
 
+def _shorty_char(desc: str) -> str:
+    if desc.startswith("L") or desc.startswith("["):
+        return "L"
+    return desc[0]
+
+
+def _compute_shorty(return_desc: str, param_descs: list[str]) -> str:
+    return _shorty_char(return_desc) + "".join(_shorty_char(p) for p in param_descs)
+
+
 def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
     """Build a minimal valid DEX binary buffer for testing."""
     raw_strings = {"V"}
     field_defs: list[dict[str, Any]] = []
+    method_defs: list[dict[str, Any]] = []
+    proto_defs_set: set[tuple[str, tuple[str, ...]]] = set()
 
     for c in classes:
         raw_strings.add(c["name"])
@@ -68,6 +81,27 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
             raw_strings.add(f["type"])
             field_defs.append({"class": c["name"], "name": f["name"], "type": f["type"]})
 
+        all_methods = c.get("direct_methods", []) + c.get("virtual_methods", [])
+        for m in all_methods:
+            raw_strings.add(m["name"])
+            ret_type = m.get("return_type", "V")
+            raw_strings.add(ret_type)
+            params = tuple(m.get("params", []))
+            for p in params:
+                raw_strings.add(p)
+            proto_defs_set.add((ret_type, params))
+            shorty = m.get("shorty") or _compute_shorty(ret_type, list(params))
+            raw_strings.add(shorty)
+            method_defs.append(
+                {
+                    "class": c["name"],
+                    "name": m["name"],
+                    "return_type": ret_type,
+                    "params": params,
+                    "proto_key": (ret_type, params),
+                }
+            )
+
     strings = sorted(raw_strings)
     str_map = {s: i for i, s in enumerate(strings)}
 
@@ -82,6 +116,35 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
         key=lambda f: (type_map[f["class"]], str_map[f["name"]], type_map[f["type"]]),
     )
     field_id_map = {(f["class"], f["name"], f["type"]): i for i, f in enumerate(field_ids_sorted)}
+
+    proto_ids_sorted = sorted(
+        proto_defs_set,
+        key=lambda p: (type_map[p[0]], tuple(type_map[pt] for pt in p[1])),
+    )
+    proto_map = {p: i for i, p in enumerate(proto_ids_sorted)}
+
+    unique_method_defs: dict[tuple[str, str, tuple[str, tuple[str, ...]]], dict[str, Any]] = {}
+    for m in method_defs:
+        unique_method_defs[(m["class"], m["name"], m["proto_key"])] = m
+
+    method_ids_sorted = sorted(
+        unique_method_defs.values(),
+        key=lambda m: (type_map[m["class"]], str_map[m["name"]], proto_map[m["proto_key"]]),
+    )
+    method_id_map = {
+        (m["class"], m["name"], m["proto_key"]): i for i, m in enumerate(method_ids_sorted)
+    }
+
+    header_size = 0x70
+    str_ids_off = header_size
+    type_ids_off = str_ids_off + len(strings) * 4
+    proto_ids_off = type_ids_off + len(type_descs) * 4
+    field_ids_off = proto_ids_off + len(proto_ids_sorted) * 12
+    method_ids_off = field_ids_off + len(field_ids_sorted) * 8
+    class_defs_off = method_ids_off + len(method_ids_sorted) * 8
+    data_off = class_defs_off + len(classes) * 32
+
+    abs_data_start = data_off
 
     data = bytearray()
 
@@ -107,6 +170,18 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
             if len(ifaces) % 2 == 1:
                 data.extend(struct.pack("<H", 0))
 
+    proto_param_offsets = {}
+    for ret_type, params in proto_ids_sorted:
+        if params:
+            while len(data) % 4 != 0:
+                data.append(0)
+            proto_param_offsets[(ret_type, params)] = len(data)
+            data.extend(struct.pack("<I", len(params)))
+            for pt in params:
+                data.extend(struct.pack("<H", type_map[pt]))
+            if len(params) % 2 == 1:
+                data.extend(struct.pack("<H", 0))
+
     class_data_offsets = {}
     static_values_offsets = {}
 
@@ -119,12 +194,50 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
             c.get("instance_fields", []),
             key=lambda f: field_id_map[(c["name"], f["name"], f["type"])],
         )
-        if s_fields or i_fields:
+        d_methods = sorted(
+            c.get("direct_methods", []),
+            key=lambda m: method_id_map[
+                (c["name"], m["name"], (m.get("return_type", "V"), tuple(m.get("params", []))))
+            ],
+        )
+        v_methods = sorted(
+            c.get("virtual_methods", []),
+            key=lambda m: method_id_map[
+                (c["name"], m["name"], (m.get("return_type", "V"), tuple(m.get("params", []))))
+            ],
+        )
+
+        method_code_offsets: dict[tuple[str, str, tuple[str, tuple[str, ...]]], int] = {}
+        for m in d_methods + v_methods:
+            proto_key = (m.get("return_type", "V"), tuple(m.get("params", [])))
+            code_spec = m.get("code")
+            if code_spec is not None:
+                while len(data) % 4 != 0:
+                    data.append(0)
+                method_code_offsets[(c["name"], m["name"], proto_key)] = len(data)
+                if isinstance(code_spec, bytes):
+                    if len(code_spec) >= 16 and m.get("is_full_code_item"):
+                        data.extend(code_spec)
+                    else:
+                        reg_sz = m.get("registers_size", 2)
+                        ins_sz = m.get(
+                            "ins_size",
+                            len(proto_key[1])
+                            + (0 if (m.get("access_flags", 1) & AccessFlags.STATIC) else 1),
+                        )
+                        outs_sz = m.get("outs_size", 0)
+                        insns_sz = len(code_spec) // 2
+                        data.extend(struct.pack("<4H2I", reg_sz, ins_sz, outs_sz, 0, 0, insns_sz))
+                        data.extend(code_spec)
+                elif hasattr(code_spec, "to_bytes"):
+                    data.extend(code_spec.to_bytes())
+
+        if s_fields or i_fields or d_methods or v_methods:
             class_data_offsets[c["name"]] = len(data)
             data.extend(_encode_uleb128(len(s_fields)))
             data.extend(_encode_uleb128(len(i_fields)))
-            data.extend(_encode_uleb128(0))  # direct_methods
-            data.extend(_encode_uleb128(0))  # virtual_methods
+            data.extend(_encode_uleb128(len(d_methods)))
+            data.extend(_encode_uleb128(len(v_methods)))
 
             prev_idx = 0
             for f in s_fields:
@@ -141,6 +254,30 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
                 prev_idx = abs_idx
                 data.extend(_encode_uleb128(diff))
                 data.extend(_encode_uleb128(f.get("access_flags", 1)))
+
+            prev_idx = 0
+            for m in d_methods:
+                proto_key = (m.get("return_type", "V"), tuple(m.get("params", [])))
+                abs_idx = method_id_map[(c["name"], m["name"], proto_key)]
+                diff = abs_idx - prev_idx
+                prev_idx = abs_idx
+                data.extend(_encode_uleb128(diff))
+                data.extend(_encode_uleb128(m.get("access_flags", 1)))
+                rel_code_off = method_code_offsets.get((c["name"], m["name"], proto_key))
+                abs_code_off = (abs_data_start + rel_code_off) if rel_code_off is not None else 0
+                data.extend(_encode_uleb128(abs_code_off))
+
+            prev_idx = 0
+            for m in v_methods:
+                proto_key = (m.get("return_type", "V"), tuple(m.get("params", [])))
+                abs_idx = method_id_map[(c["name"], m["name"], proto_key)]
+                diff = abs_idx - prev_idx
+                prev_idx = abs_idx
+                data.extend(_encode_uleb128(diff))
+                data.extend(_encode_uleb128(m.get("access_flags", 1)))
+                rel_code_off = method_code_offsets.get((c["name"], m["name"], proto_key))
+                abs_code_off = (abs_data_start + rel_code_off) if rel_code_off is not None else 0
+                data.extend(_encode_uleb128(abs_code_off))
 
         static_vals = [
             f["value"] for f in s_fields if "value" in f and isinstance(f["value"], EncodedValue)
@@ -164,15 +301,6 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
                 else:
                     data.extend(ev.to_bytes())
 
-    header_size = 0x70
-    str_ids_off = header_size
-    type_ids_off = str_ids_off + len(strings) * 4
-    field_ids_off = type_ids_off + len(type_descs) * 4
-    class_defs_off = field_ids_off + len(field_ids_sorted) * 8
-    data_off = class_defs_off + len(classes) * 32
-
-    abs_data_start = data_off
-
     buf = bytearray()
     buf.extend(b"\x00" * header_size)
 
@@ -182,6 +310,17 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
     for tdesc in type_descs:
         buf.extend(struct.pack("<I", str_map[tdesc]))
 
+    for ret_type, params in proto_ids_sorted:
+        shorty = _compute_shorty(ret_type, list(params))
+        shorty_idx = str_map[shorty]
+        ret_type_idx = type_map[ret_type]
+        params_off = (
+            (abs_data_start + proto_param_offsets[(ret_type, params)])
+            if (ret_type, params) in proto_param_offsets
+            else 0
+        )
+        buf.extend(struct.pack("<III", shorty_idx, ret_type_idx, params_off))
+
     for f in field_ids_sorted:
         buf.extend(
             struct.pack(
@@ -189,6 +328,16 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
                 type_map[f["class"]],
                 type_map[f["type"]],
                 str_map[f["name"]],
+            )
+        )
+
+    for m in method_ids_sorted:
+        buf.extend(
+            struct.pack(
+                "<HHI",
+                type_map[m["class"]],
+                proto_map[m["proto_key"]],
+                str_map[m["name"]],
             )
         )
 
@@ -218,10 +367,16 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
         (0x0000, 1, 0),
         (0x0001, len(strings), str_ids_off),
         (0x0002, len(type_descs), type_ids_off),
-        (0x0004, len(field_ids_sorted), field_ids_off),
-        (0x0006, len(classes), class_defs_off),
-        (0x1000, 1, map_off),
     ]
+    if proto_ids_sorted:
+        map_items.append((0x0003, len(proto_ids_sorted), proto_ids_off))
+    if field_ids_sorted:
+        map_items.append((0x0004, len(field_ids_sorted), field_ids_off))
+    if method_ids_sorted:
+        map_items.append((0x0005, len(method_ids_sorted), method_ids_off))
+    map_items.append((0x0006, len(classes), class_defs_off))
+    map_items.append((0x1000, 1, map_off))
+
     map_bytes = struct.pack("<I", len(map_items))
     for k, sz, off in map_items:
         map_bytes += struct.pack("<HHII", k, 0, sz, off)
@@ -243,17 +398,17 @@ def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
         str_ids_off,
         len(type_descs),
         type_ids_off,
-        0,
-        0,
+        len(proto_ids_sorted),
+        proto_ids_off if proto_ids_sorted else 0,
     )
     struct.pack_into(
         "<IIIIII",
         buf,
         0x50,
         len(field_ids_sorted),
-        field_ids_off,
-        0,
-        0,
+        field_ids_off if field_ids_sorted else 0,
+        len(method_ids_sorted),
+        method_ids_off if method_ids_sorted else 0,
         len(classes),
         class_defs_off,
     )
@@ -1154,6 +1309,342 @@ class TestFieldDomainModel(unittest.TestCase):
         self.assertNotEqual(f1_a, f1_b)
         self.assertNotEqual(f1_a, f2_a)  # Different loader identity on defining class
         self.assertNotEqual(f1_a, "not_a_field")
+
+
+class TestMethodDomainModel(unittest.TestCase):
+    def test_class_without_methods(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [{"name": "Lcom/example/NoMethods;", "super": "Ljava/lang/Object;", "access_flags": 1}]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.NoMethods"]
+
+        self.assertEqual(cls.methods, ())
+        self.assertEqual(cls.direct_methods, ())
+        self.assertEqual(cls.virtual_methods, ())
+        self.assertEqual(cls.constructors, ())
+        self.assertIsNone(cls.get_method("any"))
+        self.assertEqual(cls.find_methods("any"), [])
+
+    def test_direct_virtual_methods_and_constructors(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/Foo;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "direct_methods": [
+                        {
+                            "name": "<init>",
+                            "return_type": "V",
+                            "params": ["I"],
+                            "access_flags": int(AccessFlags.PUBLIC | AccessFlags.CONSTRUCTOR),
+                            "code": b"\x0e\x00\x0e\x00",
+                        },
+                        {
+                            "name": "<clinit>",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": int(
+                                AccessFlags.STATIC | AccessFlags.CONSTRUCTOR | AccessFlags.SYNTHETIC
+                            ),
+                            "code": b"\x0e\x00\x0e\x00",
+                        },
+                        {
+                            "name": "privateHelper",
+                            "return_type": "Z",
+                            "params": ["Ljava/lang/String;"],
+                            "access_flags": int(AccessFlags.PRIVATE | AccessFlags.FINAL),
+                            "code": b"\x0e\x00\x0e\x00",
+                        },
+                    ],
+                    "virtual_methods": [
+                        {
+                            "name": "doStuff",
+                            "return_type": "I",
+                            "params": ["I", "Ljava/lang/String;"],
+                            "access_flags": int(AccessFlags.PUBLIC | AccessFlags.SYNCHRONIZED),
+                            "code": b"\x0e\x00\x0e\x00",
+                        },
+                        {
+                            "name": "doStuff",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": int(AccessFlags.PUBLIC | AccessFlags.VARARGS),
+                            "code": b"\x0e\x00\x0e\x00",
+                        },
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.Foo"]
+
+        self.assertEqual(len(cls.direct_methods), 3)
+        self.assertEqual(len(cls.virtual_methods), 2)
+        self.assertEqual(len(cls.methods), 5)
+
+        # constructors
+        ctors = cls.constructors
+        self.assertEqual(len(ctors), 2)
+        ctor_names = {c.name for c in ctors}
+        self.assertEqual(ctor_names, {"<init>", "<clinit>"})
+
+        init_m = cls.get_method("<init>")
+        self.assertIsNotNone(init_m)
+        assert init_m is not None
+        self.assertTrue(init_m.is_direct)
+        self.assertFalse(init_m.is_virtual)
+        self.assertTrue(init_m.is_constructor)
+        self.assertTrue(init_m.is_public)
+        self.assertEqual(init_m.defining_class, cls)
+
+    def test_method_signatures_and_type_resolution(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/Service;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "virtual_methods": [
+                        {
+                            "name": "process",
+                            "return_type": "Lcom/example/Result;",
+                            "params": ["Lcom/example/Param;", "Landroid/content/Context;", "I"],
+                            "access_flags": int(AccessFlags.PUBLIC),
+                        }
+                    ],
+                },
+                {
+                    "name": "Lcom/example/Result;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                },
+                {
+                    "name": "Lcom/example/Param;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                },
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        service_cls = loader["com.example.Service"]
+
+        m = service_cls.get_method("process")
+        self.assertIsNotNone(m)
+        assert m is not None
+
+        self.assertEqual(m.name, "process")
+        self.assertEqual(m.shorty, "LLLI")
+        self.assertEqual(m.return_type_descriptor, "Lcom/example/Result;")
+        self.assertEqual(m.return_type_name, "com.example.Result")
+        self.assertIsInstance(m.return_type_class, ResolvedClass)
+        self.assertEqual(m.return_type_class.name, "com.example.Result")
+        self.assertIs(m.return_type, m.return_type_class)
+
+        self.assertEqual(
+            m.parameter_type_descriptors,
+            ("Lcom/example/Param;", "Landroid/content/Context;", "I"),
+        )
+        self.assertEqual(
+            m.parameter_type_names,
+            ("com.example.Param", "android.content.Context", "int"),
+        )
+
+        ptypes = m.parameter_types
+        self.assertEqual(len(ptypes), 3)
+        self.assertIsInstance(ptypes[0], ResolvedClass)
+        self.assertEqual(ptypes[0].name, "com.example.Param")
+        self.assertIsInstance(ptypes[1], UnresolvedClass)
+        self.assertEqual(ptypes[1].name, "android.content.Context")
+        self.assertIsInstance(ptypes[2], UnresolvedClass)
+        self.assertEqual(ptypes[2].name, "int")
+
+        self.assertEqual(
+            m.descriptor, "(Lcom/example/Param;Landroid/content/Context;I)Lcom/example/Result;"
+        )
+        expected_str = (
+            "com.example.Result com.example.Service.process"
+            "(com.example.Param, android.content.Context, int)"
+        )
+        self.assertEqual(str(m), expected_str)
+
+        expected_repr = (
+            "<Method 'com.example.Service.process"
+            "(Lcom/example/Param;Landroid/content/Context;I)Lcom/example/Result;'>"
+        )
+        self.assertEqual(repr(m), expected_repr)
+
+    def test_has_code_and_code_item_access(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/NativeClass;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "direct_methods": [
+                        {
+                            "name": "concreteMethod",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": int(AccessFlags.PUBLIC),
+                            "code": b"\x0e\x00\x0e\x00",
+                        },
+                        {
+                            "name": "nativeMethod",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": int(AccessFlags.PUBLIC | AccessFlags.NATIVE),
+                        },
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.NativeClass"]
+
+        m_concrete = cls.get_method("concreteMethod")
+        assert m_concrete is not None
+        self.assertTrue(m_concrete.has_code)
+        self.assertIsInstance(m_concrete.code, CodeItem)
+
+        m_native = cls.get_method("nativeMethod")
+        assert m_native is not None
+        self.assertFalse(m_native.has_code)
+        self.assertIsNone(m_native.code)
+        self.assertTrue(m_native.is_native)
+
+    def test_lookups_get_method_and_find_methods(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/Overload;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "virtual_methods": [
+                        {
+                            "name": "compute",
+                            "return_type": "I",
+                            "params": ["I"],
+                            "access_flags": int(AccessFlags.PUBLIC),
+                        },
+                        {
+                            "name": "compute",
+                            "return_type": "Ljava/lang/String;",
+                            "params": ["Ljava/lang/String;"],
+                            "access_flags": int(AccessFlags.PUBLIC),
+                        },
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.Overload"]
+
+        # find_methods
+        matches = cls.find_methods("compute")
+        self.assertEqual(len(matches), 2)
+
+        # get_method without descriptor returns first match
+        m1 = cls.get_method("compute")
+        self.assertIsNotNone(m1)
+        assert m1 is not None
+        self.assertEqual(m1, matches[0])
+
+        # get_method with descriptor
+        m_int = cls.get_method("compute", "(I)I")
+        self.assertIsNotNone(m_int)
+        assert m_int is not None
+        self.assertEqual(m_int.descriptor, "(I)I")
+
+        m_str = cls.get_method("compute", "(Ljava/lang/String;)Ljava/lang/String;")
+        self.assertIsNotNone(m_str)
+        assert m_str is not None
+        self.assertEqual(m_str.descriptor, "(Ljava/lang/String;)Ljava/lang/String;")
+
+        # non-existent
+        self.assertIsNone(cls.get_method("compute", "(F)V"))
+        self.assertIsNone(cls.get_method("nonExistent"))
+
+    def test_method_flags_convenience(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/FlagsTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "virtual_methods": [
+                        {
+                            "name": "allFlagsMethod",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": int(
+                                AccessFlags.PROTECTED
+                                | AccessFlags.STATIC
+                                | AccessFlags.FINAL
+                                | AccessFlags.SYNTHETIC
+                                | AccessFlags.BRIDGE
+                                | AccessFlags.VARARGS
+                                | AccessFlags.ABSTRACT
+                                | AccessFlags.STRICTFP
+                            ),
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.FlagsTest"]
+
+        m = cls.get_method("allFlagsMethod")
+        assert m is not None
+
+        self.assertTrue(m.is_protected)
+        self.assertTrue(m.is_static)
+        self.assertTrue(m.is_final)
+        self.assertTrue(m.is_synthetic)
+        self.assertTrue(m.is_bridge)
+        self.assertTrue(m.is_varargs)
+        self.assertTrue(m.is_abstract)
+        self.assertTrue(m.is_strictfp)
+        self.assertFalse(m.is_public)
+        self.assertFalse(m.is_private)
+        self.assertFalse(m.is_synchronized)
+        self.assertFalse(m.is_native)
+
+    def test_method_equality_and_hash(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/Foo;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "virtual_methods": [
+                        {"name": "m1", "return_type": "V", "params": [], "access_flags": 1},
+                        {"name": "m2", "return_type": "V", "params": [], "access_flags": 1},
+                    ],
+                }
+            ]
+        )
+        loader1 = ClassLoader.from_elements([DexFile(dex_bytes)])
+        loader2 = ClassLoader.from_elements([DexFile(dex_bytes)])
+
+        cls1 = loader1["com.example.Foo"]
+        cls2 = loader2["com.example.Foo"]
+
+        m1_a = cls1.get_method("m1")
+        m1_a_again = cls1.get_method("m1")
+        m1_b = cls1.get_method("m2")
+        m2_a = cls2.get_method("m1")
+
+        assert m1_a is not None and m1_a_again is not None and m1_b is not None and m2_a is not None
+
+        self.assertEqual(m1_a, m1_a_again)
+        self.assertEqual(hash(m1_a), hash(m1_a_again))
+
+        self.assertNotEqual(m1_a, m1_b)
+        self.assertNotEqual(m1_a, m2_a)  # Different loader identity on defining class
+        self.assertNotEqual(m1_a, "not_a_method")
 
 
 if __name__ == "__main__":

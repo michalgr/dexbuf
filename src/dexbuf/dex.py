@@ -295,19 +295,19 @@ class DexFile:
 
     def get_class_data(self, offset: Offset[ClassDataItem]) -> ClassDataItem:
         """Parse and return ClassDataItem from non-zero offset."""
-        if offset == NO_OFFSET or offset == 0:
+        if offset == NO_OFFSET:
             raise ValueError(f"Invalid class_data offset: {offset}")
         return ClassDataItem.from_buffer(self._buffer, offset)
 
     def get_code_item(self, offset: Offset[CodeItem]) -> CodeItem:
         """Parse and return CodeItem from non-zero offset."""
-        if offset == NO_OFFSET or offset == 0:
+        if offset == NO_OFFSET:
             raise ValueError(f"Invalid code_item offset: {offset}")
         return CodeItem.from_buffer(self._buffer, offset)
 
     def get_type_list(self, offset: Offset[TypeList]) -> TypeList:
         """Parse and return TypeList from non-zero offset."""
-        if offset == NO_OFFSET or offset == 0:
+        if offset == NO_OFFSET:
             raise ValueError(f"Invalid type_list offset: {offset}")
         return TypeList.from_buffer(self._buffer, offset)
 
@@ -315,12 +315,12 @@ class DexFile:
         self, offset: Offset[AnnotationsDirectoryItem]
     ) -> AnnotationsDirectoryItem:
         """Parse and return AnnotationsDirectoryItem from non-zero offset."""
-        if offset == NO_OFFSET or offset == 0:
+        if offset == NO_OFFSET:
             raise ValueError(f"Invalid annotations_directory offset: {offset}")
         return AnnotationsDirectoryItem.from_buffer(self._buffer, offset)
 
     def get_static_values(self, offset: Offset[EncodedArrayItem]) -> EncodedArray:
         """Parse and return EncodedArray from non-zero offset of EncodedArrayItem."""
-        if offset == NO_OFFSET or offset == 0:
+        if offset == NO_OFFSET:
             raise ValueError(f"Invalid static_values offset: {offset}")
         return EncodedArrayItem.from_buffer(self._buffer, offset).value

@@ -355,7 +355,7 @@ class ResolvedClass(Class):
 
     @property
     def interfaces(self) -> tuple[Class, ...]:
-        if self._def.interfaces_off == NO_OFFSET or self._def.interfaces_off == 0:
+        if self._def.interfaces_off == NO_OFFSET:
             return ()
         type_list = self._dex.get_type_list(self._def.interfaces_off)
         result: list[Class] = []
@@ -373,14 +373,14 @@ class ResolvedClass(Class):
         if self._static_fields is not None:
             return self._static_fields
 
-        if self._def.class_data_off == 0 or self._def.class_data_off == NO_OFFSET:
+        if self._def.class_data_off == NO_OFFSET:
             self._static_fields = ()
             return self._static_fields
 
         cdata = self._dex.get_class_data(self._def.class_data_off)
 
         decoded_static_values: tuple[Any, ...] = ()
-        if self._def.static_values_off != 0 and self._def.static_values_off != NO_OFFSET:
+        if self._def.static_values_off != NO_OFFSET:
             encoded_array = self._dex.get_static_values(self._def.static_values_off)
             decoded_static_values = tuple(
                 _decode_encoded_value(self._dex, v) for v in encoded_array.values
@@ -400,7 +400,7 @@ class ResolvedClass(Class):
         if self._instance_fields is not None:
             return self._instance_fields
 
-        if self._def.class_data_off == 0 or self._def.class_data_off == NO_OFFSET:
+        if self._def.class_data_off == NO_OFFSET:
             self._instance_fields = ()
             return self._instance_fields
 

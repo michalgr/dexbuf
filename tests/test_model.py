@@ -19,10 +19,12 @@ from dexbuf import (
     Class,
     ClassLoader,
     ClassLoaderElement,
+    Code,
     CodeItem,
     DexAdapter,
     DexFile,
     EncodedValue,
+    Opcode,
     ResolvedClass,
     UnresolvedClass,
     ValueType,
@@ -1643,7 +1645,9 @@ class TestMethodDomainModel(unittest.TestCase):
         m_concrete = cls.get_method("concreteMethod")
         assert m_concrete is not None
         self.assertTrue(m_concrete.has_code)
-        self.assertIsInstance(m_concrete.code, CodeItem)
+        self.assertIsInstance(m_concrete.code, Code)
+        assert m_concrete.code is not None
+        self.assertIsInstance(m_concrete.code.raw, CodeItem)
 
         m_native = cls.get_method("nativeMethod")
         assert m_native is not None
@@ -2053,6 +2057,367 @@ class TestAnnotationDomainModel(unittest.TestCase):
         self.assertEqual(ann1, ann2)  # Identical annotations across loaders compare equal
         self.assertEqual(hash(ann1), hash(ann2))
         self.assertNotEqual(ann1, "not_an_annotation")
+
+
+class TestCodeAndCFGModel(unittest.TestCase):
+    def test_code_registers_and_naming(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/RegTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "virtual_methods": [
+                        {
+                            "name": "calc",
+                            "return_type": "I",
+                            "params": ["I", "Ljava/lang/String;"],
+                            "access_flags": 1,
+                            "registers_size": 5,
+                            "ins_size": 3,  # this (p0) + arg1 (p1) + arg2 (p2)
+                            "outs_size": 1,
+                            "code": b"\x0e\x00\x0e\x00",
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.RegTest"]
+        m = cls.get_method("calc")
+        assert m is not None
+        code = m.code
+        self.assertIsNotNone(code)
+        assert code is not None
+
+        self.assertEqual(code.method, m)
+        self.assertEqual(code.registers_size, 5)
+        self.assertEqual(code.ins_size, 3)
+        self.assertEqual(code.outs_size, 1)
+        self.assertEqual(code.locals_size, 2)
+
+        # Local registers v0, v1 (reg 0, 1)
+        self.assertEqual(code.register_name(0), "v0")
+        self.assertEqual(code.register_name(1), "v1")
+
+        # Parameter registers p0, p1, p2 (reg 2, 3, 4)
+        self.assertEqual(code.register_name(2), "p0")
+        self.assertEqual(code.register_name(3), "p1")
+        self.assertEqual(code.register_name(4), "p2")
+
+    def test_strictly_pc_based_lookup_no_getitem(self) -> None:
+        # const/4 v0, #0 (0x12 0x00) -> 1 code unit
+        # return-void     (0x0e 0x00) -> 1 code unit
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/LookupTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "virtual_methods": [
+                        {
+                            "name": "foo",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": 1,
+                            "registers_size": 1,
+                            "ins_size": 1,
+                            "outs_size": 0,
+                            "code": b"\x12\x00\x0e\x00",
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        m = loader["com.example.LookupTest"].get_method("foo")
+        assert m is not None and m.code is not None
+        code = m.code
+
+        self.assertEqual(len(code.instructions), 2)
+        insn0 = code.at(0)
+        self.assertEqual(insn0.pc, 0)
+        self.assertEqual(insn0.mnemonic, "const/4")
+
+        insn1 = code.at(1)
+        self.assertEqual(insn1.pc, 1)
+        self.assertEqual(insn1.mnemonic, "return-void")
+
+        self.assertEqual(code.get(0), insn0)
+        self.assertEqual(code.get(1), insn1)
+        self.assertIsNone(code.get(99))
+
+        default_insn = code.at(0)
+        self.assertEqual(code.get(99, default_insn), default_insn)
+
+        self.assertIn(0, code)
+        self.assertIn(1, code)
+        self.assertNotIn(2, code)
+
+        with self.assertRaises(KeyError):
+            code.at(99)
+
+        # __getitem__ MUST NOT be implemented on Code or BasicBlock
+        self.assertFalse(hasattr(code, "__getitem__"))
+        with self.assertRaises(TypeError):
+            _ = code[0]  # type: ignore[typeddict-item]
+
+        block = code.entry_block
+        self.assertFalse(hasattr(block, "__getitem__"))
+        with self.assertRaises(TypeError):
+            _ = block[0]  # type: ignore[typeddict-item]
+
+    def test_code_instruction_properties_and_branches(self) -> None:
+        # const/4 v0, #0 (1 unit)
+        # if-eqz v0, +2  (2 units: 0x38, 0x00, 0x02, 0x00)
+        # return-void    (1 unit)
+        # return v0      (1 unit: 0x0f, 0x00)
+        bytecode = b"\x12\x00\x38\x00\x02\x00\x0e\x00\x0f\x00"
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/InsnTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "virtual_methods": [
+                        {
+                            "name": "test",
+                            "return_type": "I",
+                            "params": [],
+                            "access_flags": 1,
+                            "registers_size": 2,
+                            "ins_size": 1,
+                            "outs_size": 0,
+                            "code": bytecode,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        m = loader["com.example.InsnTest"].get_method("test")
+        assert m is not None and m.code is not None
+        code = m.code
+
+        insn_const = code.at(0)
+        self.assertEqual(insn_const.pc, 0)
+        self.assertEqual(insn_const.next_pc, 1)
+        self.assertEqual(insn_const.code_units, 1)
+        self.assertEqual(insn_const.opcode, Opcode.CONST_4)
+        self.assertEqual(insn_const.mnemonic, "const/4")
+        self.assertEqual(insn_const.registers, (0,))
+        self.assertEqual(insn_const.register_names, ("v0",))
+        self.assertFalse(insn_const.is_branch)
+        self.assertFalse(insn_const.is_return)
+        self.assertIsNone(insn_const.branch_offset)
+        self.assertIsNone(insn_const.target_pc)
+
+        insn_if = code.at(1)
+        self.assertEqual(insn_if.pc, 1)
+        self.assertEqual(insn_if.next_pc, 3)
+        self.assertEqual(insn_if.code_units, 2)
+        self.assertEqual(insn_if.opcode, Opcode.IF_EQZ)
+        self.assertEqual(insn_if.mnemonic, "if-eqz")
+        self.assertTrue(insn_if.is_branch)
+        self.assertTrue(insn_if.is_conditional_branch)
+        self.assertFalse(insn_if.is_unconditional_branch)
+        self.assertEqual(insn_if.branch_offset, 2)
+        self.assertEqual(insn_if.target_pc, 3)  # 1 + 2 = 3
+
+        insn_ret_void = code.at(3)
+        self.assertEqual(insn_ret_void.pc, 3)
+        self.assertTrue(insn_ret_void.is_return)
+
+        insn_ret = code.at(4)
+        self.assertEqual(insn_ret.pc, 4)
+        self.assertTrue(insn_ret.is_return)
+
+    def test_constant_resolution(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/ConstTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "static_fields": [{"name": "myField", "type": "I", "access_flags": 8}],
+                    "virtual_methods": [
+                        {
+                            "name": "doConsts",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": 1,
+                            # const-string v0, string@0 (0x1a 0x00 0x00 0x00)
+                            # const-class v0, Lcom/example/ConstTest;
+                            # (0x1c 0x00 0x01 0x00) -> type_idx 1
+                            # sget v0, field@0 (0x60 0x00 0x00 0x00)
+                            # invoke-virtual {v0}, Lcom/example/ConstTest;->doConsts()V
+                            # (0x6e 0x10 0x00 0x00 0x00 0x00)
+                            # return-void (0x0e 0x00)
+                            "code": (
+                                b"\x1a\x00\x00\x00"
+                                b"\x1c\x00\x01\x00"
+                                b"\x60\x00\x00\x00"
+                                b"\x6e\x10\x00\x00\x00\x00"
+                                b"\x0e\x00"
+                            ),
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.ConstTest"]
+        m = cls.get_method("doConsts")
+        assert m is not None and m.code is not None
+        code = m.code
+
+        # ConstString
+        insn_str = code.at(0)
+        self.assertEqual(insn_str.mnemonic, "const-string")
+        self.assertIsNotNone(insn_str.string_value)
+
+        # ConstClass
+        insn_cls = code.at(2)
+        self.assertEqual(insn_cls.mnemonic, "const-class")
+        self.assertEqual(insn_cls.type_descriptor, "Lcom/example/ConstTest;")
+        self.assertIsInstance(insn_cls.type_class, ResolvedClass)
+        self.assertEqual(insn_cls.type_class, cls)
+
+        # Sget
+        insn_sget = code.at(4)
+        self.assertEqual(insn_sget.mnemonic, "sget")
+        self.assertIsNotNone(insn_sget.field_id)
+        self.assertEqual(insn_sget.target_field_name, "myField")
+        self.assertEqual(insn_sget.target_field_type_descriptor, "I")
+
+        # InvokeVirtual
+        insn_inv = code.at(6)
+        self.assertEqual(insn_inv.mnemonic, "invoke-virtual")
+        self.assertIsNotNone(insn_inv.method_id)
+        self.assertEqual(insn_inv.target_method_name, "doConsts")
+        self.assertEqual(insn_inv.target_method_descriptor, "()V")
+
+    def test_cfg_basic_blocks_and_edge_wiring(self) -> None:
+        # const/4 v0, #0           (PC 0, 1 unit)
+        # if-eqz v0, +3            (PC 1, 2 units -> target PC 4)
+        # const/4 v0, #1           (PC 3, 1 unit)
+        # goto +2                  (PC 4, 1 unit -> target PC 6)
+        # const/4 v0, #2           (PC 5, 1 unit)
+        # return v0                (PC 6, 1 unit)
+        bytecode = b"\x12\x00\x38\x00\x03\x00\x12\x10\x28\x02\x12\x20\x0e\x00"
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/CFGTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "virtual_methods": [
+                        {
+                            "name": "cfg",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": 1,
+                            "registers_size": 1,
+                            "ins_size": 1,
+                            "outs_size": 0,
+                            "code": bytecode,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        m = loader["com.example.CFGTest"].get_method("cfg")
+        assert m is not None and m.code is not None
+        code = m.code
+
+        blocks = code.blocks
+        self.assertGreater(len(blocks), 1)
+
+        entry = code.entry_block
+        self.assertTrue(entry.is_entry)
+        self.assertEqual(entry.start_pc, 0)
+        self.assertTrue(entry.covers(0))
+        self.assertTrue(entry.covers(1))
+
+        block_at_3 = code.get_block_at(3)
+        self.assertIsNotNone(block_at_3)
+
+        # Disassembly formatting test
+        disasm = code.disassemble()
+        self.assertIn(".registers 1", disasm)
+        self.assertIn("block_0", disasm)
+        self.assertIn("const/4", disasm)
+
+    def test_try_catch_domain_model(self) -> None:
+        # Header: reg_sz=2, ins_sz=1, outs_sz=0, tries_sz=1, debug_off=0, insns_sz=2
+        # insns: 2 units (const/4 v0, #0 [1 unit], return-void [1 unit])
+        # padding: 2 bytes (insns_sz=2 is even, so no padding needed)
+        # try_item: start=0, count=1, handler_off=1 (8 bytes: 0x00000000, 0x0001, 0x0001)
+        # catch_handler_list:
+        #   count uleb128 = 1 (\x01)
+        #   handler at off 1: size=1 (\x01), type_idx=1 (\x01), addr=1 (\x01)
+        # full CodeItem bytes:
+        # header (16 bytes): 0200 0100 0000 0100 00000000 02000000
+        # insns (4 bytes): 1200 0e00
+        # tries (8 bytes): 00000000 0100 0100
+        # handlers: 01 01 01 01
+        header = struct.pack("<4H2I", 2, 1, 0, 1, 0, 2)
+        insns = b"\x12\x00\x0e\x00"
+        tries = struct.pack("<IHH", 0, 1, 1)
+        handlers = b"\x01\x01\x01\x01"
+        code_item_bytes = header + insns + tries + handlers
+
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/TryTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "virtual_methods": [
+                        {
+                            "name": "tryMethod",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": 1,
+                            "code": code_item_bytes,
+                            "is_full_code_item": True,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        m = loader["com.example.TryTest"].get_method("tryMethod")
+        assert m is not None and m.code is not None
+        code = m.code
+
+        self.assertEqual(len(code.try_catches), 1)
+        tc = code.try_catches[0]
+        self.assertEqual(tc.start_pc, 0)
+        self.assertEqual(tc.end_pc, 1)
+        self.assertEqual(tc.code_unit_count, 1)
+        self.assertTrue(tc.covers(0))
+        self.assertFalse(tc.covers(1))
+
+        self.assertEqual(code.find_try_catch(0), tc)
+        self.assertIsNone(code.find_try_catch(1))
+
+        handler = tc.handler
+        self.assertEqual(len(handler.handlers), 1)
+        cp = handler.handlers[0]
+        self.assertEqual(cp.target_pc, 1)
+        self.assertEqual(cp.type_descriptor, "Ljava/lang/Object;")
+        self.assertIsInstance(cp.type_class, UnresolvedClass)
+        self.assertEqual(cp.type_class, UnresolvedClass("Ljava/lang/Object;"))
+        self.assertEqual(repr(cp), "<CatchPair 'java.lang.Object' -> PC 1>")
+        self.assertEqual(repr(handler), "<CatchHandler handlers=1 catch_all=None>")
+        self.assertEqual(repr(tc), f"<TryCatch [0..1) -> {handler!r}>")
+
+        entry_block = code.get_block_at(0)
+        assert entry_block is not None
+        self.assertEqual(len(entry_block.exception_handlers), 1)
+        self.assertEqual(entry_block.exception_handlers[0], handler)
 
 
 if __name__ == "__main__":

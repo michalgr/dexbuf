@@ -4,7 +4,7 @@ import unittest
 
 import dexbuf
 from dexbuf.items import AnnotationVisibility, CodeItem
-from dexbuf.model import ResolvedClass, UnresolvedClass, ZipAdapter
+from dexbuf.model import Code, ResolvedClass, UnresolvedClass, ZipAdapter
 from tests.helpers import get_k9mail_apk_path  # type: ignore[import-not-found]
 
 
@@ -185,7 +185,8 @@ class TestK9MailIntegration(unittest.TestCase):
             # Code item presence on concrete method
             self.assertTrue(hostname_method.has_code)
             self.assertIsNotNone(hostname_method.code)
-            self.assertIsInstance(hostname_method.code, CodeItem)
+            self.assertIsInstance(hostname_method.code, Code)
+            self.assertIsInstance(hostname_method.code.raw, CodeItem)
 
             # Abstract interface method
             iface_cls = loader["j$.io.InputStreamRetargetInterface"]

@@ -8,7 +8,8 @@ import tempfile
 import unittest
 import zipfile
 import zlib
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from types import MappingProxyType
 from typing import Any
 
 from dexbuf import (
@@ -1876,6 +1877,17 @@ class TestAnnotationDomainModel(unittest.TestCase):
 
         # Raw item access
         self.assertEqual(ann_runtime.raw.visibility, AnnotationVisibility.RUNTIME)
+
+        # Mapping and MappingProxyType type conformity
+        self.assertIsInstance(ann_runtime.elements, Mapping)
+        self.assertIsInstance(ann_runtime.elements, MappingProxyType)
+
+        # Immutability verification
+        with self.assertRaises(TypeError):
+            ann_runtime.elements["new_key"] = int_val  # type: ignore[index]
+
+        with self.assertRaises(TypeError):
+            del ann_runtime.elements["val"]  # type: ignore[index]
 
         # Element access
         self.assertEqual(len(ann_runtime), 2)

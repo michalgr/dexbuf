@@ -3,6 +3,7 @@
 import unittest
 
 import dexbuf
+from dexbuf.items import AnnotationVisibility, CodeItem
 from dexbuf.model import ResolvedClass, UnresolvedClass, ZipAdapter
 from tests.helpers import get_k9mail_apk_path  # type: ignore[import-not-found]
 
@@ -139,6 +140,121 @@ class TestK9MailIntegration(unittest.TestCase):
             self.assertEqual(storage_field.type_name, "com.fsck.k9.preferences.K9StoragePersister")
             self.assertFalse(storage_field.is_static)
             self.assertTrue(storage_field.is_public)
+
+    def test_method_domain_model(self) -> None:
+        """Verify method domain model, signatures, modifiers, and code presence."""
+        with dexbuf.open(self.apk_path) as loader:
+            addr_cls = loader["com.fsck.k9.mail.Address"]
+
+            # Method collections
+            self.assertEqual(len(addr_cls.methods), 8)
+            self.assertEqual(len(addr_cls.direct_methods), 3)
+            self.assertEqual(len(addr_cls.virtual_methods), 5)
+            self.assertEqual(len(addr_cls.constructors), 3)
+
+            # Constructors
+            clinit = next(m for m in addr_cls.constructors if m.name == "<clinit>")
+            self.assertTrue(clinit.is_static)
+            self.assertTrue(clinit.is_constructor)
+
+            inits = [m for m in addr_cls.constructors if m.name == "<init>"]
+            self.assertEqual(len(inits), 2)
+            for init in inits:
+                self.assertFalse(init.is_static)
+                self.assertTrue(init.is_constructor)
+
+            # Virtual method properties
+            hostname_method = addr_cls.get_method("getHostname")
+            self.assertIsNotNone(hostname_method)
+            self.assertEqual(hostname_method.name, "getHostname")
+            self.assertEqual(hostname_method.descriptor, "()Ljava/lang/String;")
+            self.assertEqual(hostname_method.return_type_name, "java.lang.String")
+            self.assertEqual(hostname_method.parameter_type_names, ())
+            self.assertEqual(hostname_method.parameter_types, ())
+            self.assertTrue(hostname_method.is_public)
+            self.assertTrue(hostname_method.is_virtual)
+
+            # get_method and find_methods lookup
+            self.assertEqual(
+                addr_cls.get_method("getHostname", "()Ljava/lang/String;"), hostname_method
+            )
+            found_to_string = addr_cls.find_methods("toString")
+            self.assertEqual(len(found_to_string), 1)
+            self.assertEqual(found_to_string[0].name, "toString")
+
+            # Code item presence on concrete method
+            self.assertTrue(hostname_method.has_code)
+            self.assertIsNotNone(hostname_method.code)
+            self.assertIsInstance(hostname_method.code, CodeItem)
+
+            # Abstract interface method
+            iface_cls = loader["j$.io.InputStreamRetargetInterface"]
+            abstract_method = iface_cls.get_method("transferTo")
+            self.assertIsNotNone(abstract_method)
+            self.assertTrue(abstract_method.is_abstract)
+            self.assertFalse(abstract_method.has_code)
+            self.assertIsNone(abstract_method.code)
+
+    def test_annotation_domain_model(self) -> None:
+        """Verify class, field, and method annotations and element immutability."""
+        with dexbuf.open(self.apk_path) as loader:
+            # Class runtime annotations
+            keep_cls = loader["androidx.annotation.Keep"]
+            retention_ann = keep_cls.get_annotation("java.lang.annotation.Retention")
+            target_ann = keep_cls.get_annotation("Ljava/lang/annotation/Target;")
+            self.assertIsNotNone(retention_ann)
+            self.assertIsNotNone(target_ann)
+            self.assertTrue(retention_ann.is_runtime)
+            self.assertTrue(target_ann.is_runtime)
+            self.assertEqual(retention_ann.visibility, AnnotationVisibility.RUNTIME)
+            self.assertEqual(target_ann.visibility, AnnotationVisibility.RUNTIME)
+
+            # Class system annotations
+            factory_cls = loader["coil3.EventListener$Factory"]
+            inner_ann = factory_cls.get_annotation("dalvik.annotation.InnerClass")
+            self.assertIsNotNone(inner_ann)
+            self.assertTrue(inner_ann.is_system)
+            self.assertEqual(inner_ann.visibility, AnnotationVisibility.SYSTEM)
+
+            # Field annotations
+            bci_cls = loader["kotlin.coroutines.jvm.internal.BaseContinuationImpl"]
+            completion_field = bci_cls.get_field("completion")
+            self.assertIsNotNone(completion_field)
+            sig_ann = completion_field.get_annotation("dalvik.annotation.Signature")
+            self.assertIsNotNone(sig_ann)
+            self.assertEqual(sig_ann.type_name, "dalvik.annotation.Signature")
+
+            # Method annotations
+            rv_cls = loader["androidx.recyclerview.widget.RecyclerView"]
+            scroll_method = rv_cls.get_method("setOnScrollListener")
+            self.assertIsNotNone(scroll_method)
+            dep_ann = scroll_method.get_annotation("java.lang.Deprecated")
+            self.assertIsNotNone(dep_ann)
+            self.assertEqual(dep_ann.type_name, "java.lang.Deprecated")
+
+            # get_annotation with Java type names and Dalvik descriptors
+            self.assertEqual(
+                keep_cls.get_annotation("java.lang.annotation.Retention"),
+                keep_cls.get_annotation("Ljava/lang/annotation/Retention;"),
+            )
+            self.assertEqual(
+                completion_field.get_annotation("dalvik.annotation.Signature"),
+                completion_field.get_annotation("Ldalvik/annotation/Signature;"),
+            )
+            self.assertEqual(
+                scroll_method.get_annotation("java.lang.Deprecated"),
+                scroll_method.get_annotation("Ljava/lang/Deprecated;"),
+            )
+
+            # Element access and immutability
+            self.assertIn("value", retention_ann.elements)
+            with self.assertRaises(TypeError):
+                retention_ann.elements["value"] = "mutation_test"  # type: ignore[index]
+
+            # Parameter annotations length matches parameter count
+            for method in rv_cls.methods:
+                param_count = len(method.parameter_type_names)
+                self.assertEqual(len(method.parameter_annotations), param_count)
 
     def test_resource_management(self) -> None:
         """Verify context manager and explicit close clean up resources properly."""

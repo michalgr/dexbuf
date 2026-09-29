@@ -8,7 +8,7 @@ import fnmatch
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Buffer, Iterator, Sequence
-from typing import Any, Protocol, Self, TypeIs, runtime_checkable
+from typing import Protocol, Self, TypeIs, runtime_checkable
 
 from dexbuf.descriptors import (
     descriptor_to_type_name,
@@ -59,10 +59,9 @@ __all__ = [
 class Annotation:
     """Represents an annotation attached to a class, field, or method."""
 
-    __slots__ = ("_dex", "_elements", "_item", "_loader")
+    __slots__ = ("_dex", "_elements", "_item")
 
-    def __init__(self, loader: ClassLoader, dex: DexFile, item: AnnotationItem) -> None:
-        self._loader: ClassLoader = loader
+    def __init__(self, dex: DexFile, item: AnnotationItem) -> None:
         self._dex: DexFile = dex
         self._item: AnnotationItem = item
         self._elements: dict[str, EncodedValue] = {
@@ -76,17 +75,6 @@ class Annotation:
     @property
     def type_name(self) -> str:
         return descriptor_to_type_name(self.type_descriptor)
-
-    @property
-    def type_class(self) -> Class:
-        resolved = self._loader.load_class(self.type_descriptor)
-        if resolved is not None:
-            return resolved
-        return UnresolvedClass(self.type_descriptor)
-
-    @property
-    def type(self) -> Class:
-        return self.type_class
 
     @property
     def visibility(self) -> AnnotationVisibility:
@@ -115,7 +103,7 @@ class Annotation:
     def __getitem__(self, name: str) -> EncodedValue:
         return self._elements[name]
 
-    def get(self, name: str, default: Any = None) -> EncodedValue | Any:
+    def get(self, name: str, default: EncodedValue | None = None) -> EncodedValue | None:
         return self._elements.get(name, default)
 
     def __contains__(self, name: object) -> bool:
@@ -138,7 +126,6 @@ class Annotation:
             return NotImplemented
         return (
             type(self) is type(other)
-            and self._loader is other._loader
             and self.type_descriptor == other.type_descriptor
             and self.visibility == other.visibility
             and self.elements == other.elements
@@ -148,7 +135,6 @@ class Annotation:
         return hash(
             (
                 type(self),
-                self._loader,
                 self.type_descriptor,
                 self.visibility,
                 tuple(sorted(self.elements.items())),
@@ -843,7 +829,7 @@ class ResolvedClass(Class):
         for entry in set_item.entries:
             if entry.annotation_off != NO_OFFSET:
                 item = self._dex.get_annotation_item(entry.annotation_off)
-                result.append(Annotation(self._loader, self._dex, item))
+                result.append(Annotation(self._dex, item))
         return tuple(result)
 
     @property

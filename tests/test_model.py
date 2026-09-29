@@ -1868,9 +1868,6 @@ class TestAnnotationDomainModel(unittest.TestCase):
 
         self.assertEqual(ann_runtime.type_descriptor, "Lcom/example/RuntimeAnn;")
         self.assertEqual(ann_runtime.type_name, "com.example.RuntimeAnn")
-        self.assertIsInstance(ann_runtime.type_class, ResolvedClass)
-        self.assertEqual(ann_runtime.type_class.name, "com.example.RuntimeAnn")
-        self.assertIs(ann_runtime.type, ann_runtime.type_class)
 
         self.assertEqual(ann_runtime.visibility, AnnotationVisibility.RUNTIME)
         self.assertTrue(ann_runtime.is_runtime)
@@ -1887,8 +1884,12 @@ class TestAnnotationDomainModel(unittest.TestCase):
         self.assertNotIn("missing", ann_runtime)
 
         self.assertEqual(ann_runtime["val"].value_type, ValueType.STRING)
-        self.assertEqual(ann_runtime.get("num").value, 100)
-        self.assertEqual(ann_runtime.get("missing", 42), 42)
+        num_val = ann_runtime.get("num")
+        assert num_val is not None
+        self.assertEqual(num_val.value, 100)
+        self.assertIsNone(ann_runtime.get("missing"))
+        default_ev = EncodedValue(value_arg=3, value_type=ValueType.INT, value=42)
+        self.assertEqual(ann_runtime.get("missing", default_ev), default_ev)
 
         elem_keys = set(ann_runtime)
         self.assertEqual(elem_keys, {"val", "num"})
@@ -1902,7 +1903,6 @@ class TestAnnotationDomainModel(unittest.TestCase):
         self.assertTrue(ann_build.is_build)
         self.assertFalse(ann_build.is_runtime)
         self.assertFalse(ann_build.is_system)
-        self.assertIsInstance(ann_build.type_class, UnresolvedClass)
 
         ann_system = cls.get_annotation("com.example.SystemAnn")
         assert ann_system is not None
@@ -2038,7 +2038,8 @@ class TestAnnotationDomainModel(unittest.TestCase):
         self.assertEqual(ann1, ann1_again)
         self.assertEqual(hash(ann1), hash(ann1_again))
 
-        self.assertNotEqual(ann1, ann2)  # Different loader identity
+        self.assertEqual(ann1, ann2)  # Identical annotations across loaders compare equal
+        self.assertEqual(hash(ann1), hash(ann2))
         self.assertNotEqual(ann1, "not_an_annotation")
 
 

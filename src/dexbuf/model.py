@@ -7,7 +7,8 @@ import builtins
 import fnmatch
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Buffer, Iterator, Sequence
+from collections.abc import Buffer, Iterator, Mapping, Sequence
+from types import MappingProxyType
 from typing import Protocol, Self, TypeIs, runtime_checkable
 
 from dexbuf.descriptors import (
@@ -64,9 +65,9 @@ class Annotation:
     def __init__(self, dex: DexFile, item: AnnotationItem) -> None:
         self._dex: DexFile = dex
         self._item: AnnotationItem = item
-        self._elements: dict[str, EncodedValue] = {
-            dex.get_string(elem.name_idx): elem.value for elem in item.annotation.elements
-        }
+        self._elements: Mapping[str, EncodedValue] = MappingProxyType(
+            {dex.get_string(elem.name_idx): elem.value for elem in item.annotation.elements}
+        )
 
     @property
     def type_descriptor(self) -> str:
@@ -93,7 +94,7 @@ class Annotation:
         return self.visibility == AnnotationVisibility.SYSTEM
 
     @property
-    def elements(self) -> dict[str, EncodedValue]:
+    def elements(self) -> Mapping[str, EncodedValue]:
         return self._elements
 
     @property

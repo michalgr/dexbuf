@@ -57,6 +57,7 @@ class TestSanity(unittest.TestCase):
             "DebugInstruction",
             "DebugOpcode",
             "DebugPosition",
+            "Descriptor",
             "DexAdapter",
             "DexFile",
             "EncodedAnnotation",
@@ -128,6 +129,7 @@ class TestSanity(unittest.TestCase):
             "open_mmap",
             "parse_method_descriptor",
             "scoped_mmap",
+            "to_descriptor",
             "type_name_to_descriptor",
         ]
         self.assertEqual(dexbuf.__all__, expected_all)

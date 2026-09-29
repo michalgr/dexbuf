@@ -8,6 +8,7 @@ import zlib
 from collections.abc import Buffer, Iterator, Sequence
 from typing import Any, overload
 
+from dexbuf.descriptors import Descriptor
 from dexbuf.items import (
     REVERSE_ENDIAN_CONSTANT,
     AnnotationItem,
@@ -232,10 +233,10 @@ class DexFile:
                 high = mid - 1
         return None
 
-    def get_type_descriptor(self, idx: Idx[TypeIdItem]) -> str:
+    def get_type_descriptor(self, idx: Idx[TypeIdItem]) -> Descriptor:
         """Resolve TypeIdItem index to type descriptor string."""
         type_id = self.type_ids.get(idx)
-        return self.get_string(type_id.descriptor_idx)
+        return Descriptor(self.get_string(type_id.descriptor_idx))
 
     def get_type_id(self, idx: Idx[TypeIdItem]) -> TypeIdItem:
         """Fetch TypeIdItem by index."""

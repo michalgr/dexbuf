@@ -12,9 +12,10 @@ from types import MappingProxyType
 from typing import Protocol, Self, TypeIs, runtime_checkable
 
 from dexbuf.descriptors import (
+    Descriptor,
     descriptor_to_type_name,
     format_method_descriptor,
-    type_name_to_descriptor,
+    to_descriptor,
 )
 from dexbuf.dex import DexFile
 from dexbuf.flags import AccessFlags
@@ -70,7 +71,7 @@ class Annotation:
         )
 
     @property
-    def type_descriptor(self) -> str:
+    def type_descriptor(self) -> Descriptor:
         return self._dex.get_type_descriptor(self._item.annotation.type_idx)
 
     @property
@@ -213,7 +214,7 @@ class Method:
         return self._cls.dex_file.get_string(self.proto.shorty_idx)
 
     @property
-    def return_type_descriptor(self) -> str:
+    def return_type_descriptor(self) -> Descriptor:
         return self._cls.dex_file.get_type_descriptor(self.proto.return_type_idx)
 
     @property
@@ -232,7 +233,7 @@ class Method:
         return self.return_type_class
 
     @property
-    def parameter_type_descriptors(self) -> tuple[str, ...]:
+    def parameter_type_descriptors(self) -> tuple[Descriptor, ...]:
         if self.proto.parameters_off == NO_OFFSET:
             return ()
         type_list = self._cls.dex_file.get_type_list(self.proto.parameters_off)
@@ -344,10 +345,7 @@ class Method:
         return self._parameter_annotations
 
     def get_annotation(self, name_or_descriptor: str) -> Annotation | None:
-        if not (name_or_descriptor.startswith("L") or name_or_descriptor.startswith("[")):
-            desc = type_name_to_descriptor(name_or_descriptor)
-        else:
-            desc = name_or_descriptor
+        desc = to_descriptor(name_or_descriptor)
         for ann in self.annotations:
             if ann.type_descriptor == desc:
                 return ann
@@ -402,7 +400,7 @@ class Field:
         return self._cls.dex_file.get_string(self._field_id.name_idx)
 
     @property
-    def type_descriptor(self) -> str:
+    def type_descriptor(self) -> Descriptor:
         return self._cls.dex_file.get_type_descriptor(self._field_id.type_idx)
 
     @property
@@ -480,10 +478,7 @@ class Field:
         return self._annotations
 
     def get_annotation(self, name_or_descriptor: str) -> Annotation | None:
-        if not (name_or_descriptor.startswith("L") or name_or_descriptor.startswith("[")):
-            desc = type_name_to_descriptor(name_or_descriptor)
-        else:
-            desc = name_or_descriptor
+        desc = to_descriptor(name_or_descriptor)
         for ann in self.annotations:
             if ann.type_descriptor == desc:
                 return ann
@@ -511,10 +506,11 @@ class Field:
 class Class(ABC):
     """Abstract base class representing a Java / Dalvik class or interface."""
 
+    descriptor: Descriptor
     __slots__ = ("descriptor",)
 
     def __init__(self, descriptor: str) -> None:
-        self.descriptor: str = descriptor
+        self.descriptor: Descriptor = to_descriptor(descriptor)
 
     @property
     @abstractmethod
@@ -564,11 +560,7 @@ class UnresolvedClass(Class):
     @classmethod
     def from_name_or_descriptor(cls, name_or_descriptor: str) -> Self:
         """Create an UnresolvedClass from either a Java type name or Dalvik descriptor."""
-        if not (name_or_descriptor.startswith("L") or name_or_descriptor.startswith("[")):
-            descriptor = type_name_to_descriptor(name_or_descriptor)
-        else:
-            descriptor = name_or_descriptor
-        return cls(descriptor)
+        return cls(to_descriptor(name_or_descriptor))
 
     @property
     def is_resolved(self) -> bool:
@@ -847,10 +839,7 @@ class ResolvedClass(Class):
         return self._annotations
 
     def get_annotation(self, name_or_descriptor: str) -> Annotation | None:
-        if not (name_or_descriptor.startswith("L") or name_or_descriptor.startswith("[")):
-            desc = type_name_to_descriptor(name_or_descriptor)
-        else:
-            desc = name_or_descriptor
+        desc = to_descriptor(name_or_descriptor)
         for ann in self.annotations:
             if ann.type_descriptor == desc:
                 return ann
@@ -1080,10 +1069,7 @@ class ClassLoader:
 
     def load_class(self, descriptor: str) -> ResolvedClass | None:
         """Resolve a class definition by descriptor or Java type name."""
-        if not (descriptor.startswith("L") or descriptor.startswith("[")):
-            desc = type_name_to_descriptor(descriptor)
-        else:
-            desc = descriptor
+        desc = to_descriptor(descriptor)
 
         if desc in self._cache:
             return self._cache[desc]
@@ -1100,10 +1086,7 @@ class ClassLoader:
 
     def find_all(self, descriptor: str) -> list[ResolvedClass]:
         """Find all matching class definitions across all elements without early stopping."""
-        if not (descriptor.startswith("L") or descriptor.startswith("[")):
-            desc = type_name_to_descriptor(descriptor)
-        else:
-            desc = descriptor
+        desc = to_descriptor(descriptor)
 
         results: list[ResolvedClass] = []
         for element in self.elements:

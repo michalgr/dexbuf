@@ -4,11 +4,16 @@ See https://source.android.com/docs/core/runtime/dex-format#type-descriptor
 """
 
 from collections.abc import Sequence
+from typing import NewType
+
+Descriptor = NewType("Descriptor", str)
 
 __all__ = [
+    "Descriptor",
     "descriptor_to_type_name",
     "format_method_descriptor",
     "parse_method_descriptor",
+    "to_descriptor",
     "type_name_to_descriptor",
 ]
 
@@ -104,7 +109,7 @@ def descriptor_to_type_name(descriptor: str) -> str:
     return base_name + "[]" * dim
 
 
-def type_name_to_descriptor(name: str) -> str:
+def type_name_to_descriptor(name: str) -> Descriptor:
     """Convert a canonical Java type name to a Dalvik type descriptor.
 
     See https://source.android.com/docs/core/runtime/dex-format#type-descriptor
@@ -145,7 +150,35 @@ def type_name_to_descriptor(name: str) -> str:
         class_path = base_name.replace(".", "/")
         base_desc = f"L{class_path};"
 
-    return "[" * dim + base_desc
+    return Descriptor("[" * dim + base_desc)
+
+
+def to_descriptor(name_or_descriptor: str) -> Descriptor:
+    """Normalize a type name or descriptor string to a canonical Descriptor.
+
+    Accepts Dalvik type descriptors (e.g. "I", "Ljava/lang/String;", "[[I")
+    and Java type names (e.g. "int", "java.lang.String", "List", "int[][]").
+
+    Args:
+        name_or_descriptor: Type name or descriptor string.
+
+    Returns:
+        The normalized Descriptor.
+
+    Raises:
+        ValueError: If input is empty or not a valid type name or descriptor.
+    """
+    if not isinstance(name_or_descriptor, str) or not name_or_descriptor:
+        raise ValueError("Type name or descriptor must be a non-empty string")
+
+    try:
+        parsed, end_idx = _parse_single_descriptor(name_or_descriptor, 0)
+        if end_idx == len(name_or_descriptor):
+            return Descriptor(parsed)
+    except ValueError:
+        pass
+
+    return type_name_to_descriptor(name_or_descriptor)
 
 
 def parse_method_descriptor(descriptor: str) -> tuple[tuple[str, ...], str]:

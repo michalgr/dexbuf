@@ -6,6 +6,7 @@ from dexbuf.descriptors import (
     descriptor_to_type_name,
     format_method_descriptor,
     parse_method_descriptor,
+    to_descriptor,
     type_name_to_descriptor,
 )
 
@@ -149,6 +150,44 @@ class TestDescriptors(unittest.TestCase):
     def test_format_method_descriptor_void_param(self) -> None:
         with self.assertRaises(ValueError):
             format_method_descriptor(["I", "V"], "V")
+
+    def test_to_descriptor(self) -> None:
+        # Class descriptors
+        self.assertEqual(to_descriptor("Lcom/example/MyClass;"), "Lcom/example/MyClass;")
+        self.assertEqual(to_descriptor("Ljava/lang/String;"), "Ljava/lang/String;")
+        self.assertIsInstance(to_descriptor("Ljava/lang/String;"), str)
+
+        # Class names (including qualified and single-word classes)
+        self.assertEqual(to_descriptor("com.example.MyClass"), "Lcom/example/MyClass;")
+        self.assertEqual(to_descriptor("java.lang.String"), "Ljava/lang/String;")
+        self.assertEqual(to_descriptor("List"), "LList;")
+
+        # Primitives
+        self.assertEqual(to_descriptor("I"), "I")
+        self.assertEqual(to_descriptor("int"), "I")
+        self.assertEqual(to_descriptor("boolean"), "Z")
+        self.assertEqual(to_descriptor("V"), "V")
+
+        # Arrays
+        self.assertEqual(to_descriptor("[I"), "[I")
+        self.assertEqual(to_descriptor("int[]"), "[I")
+        self.assertEqual(to_descriptor("[[Ljava/lang/String;"), "[[Ljava/lang/String;")
+        self.assertEqual(to_descriptor("java.lang.String[][]"), "[[Ljava/lang/String;")
+        self.assertEqual(to_descriptor("List[]"), "[LList;")
+
+    def test_to_descriptor_invalid(self) -> None:
+        invalid_inputs = [
+            "",
+            "void[]",
+            "int[",
+            "com..example",
+            "invalid name",
+            "[]int",
+        ]
+        for inp in invalid_inputs:
+            with self.subTest(inp=inp):
+                with self.assertRaises(ValueError):
+                    to_descriptor(inp)
 
 
 if __name__ == "__main__":

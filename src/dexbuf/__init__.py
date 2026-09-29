@@ -10,9 +10,11 @@ from dexbuf.debug import (
     DebugPosition,
 )
 from dexbuf.descriptors import (
+    Descriptor,
     descriptor_to_type_name,
     format_method_descriptor,
     parse_method_descriptor,
+    to_descriptor,
     type_name_to_descriptor,
 )
 from dexbuf.dex import DexFile
@@ -177,6 +179,7 @@ __all__ = [
     "DebugInstruction",
     "DebugOpcode",
     "DebugPosition",
+    "Descriptor",
     "DexAdapter",
     "DexFile",
     "EncodedAnnotation",
@@ -248,5 +251,6 @@ __all__ = [
     "open_mmap",
     "parse_method_descriptor",
     "scoped_mmap",
+    "to_descriptor",
     "type_name_to_descriptor",
 ]

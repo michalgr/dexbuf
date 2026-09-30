@@ -5,10 +5,11 @@ See https://source.android.com/docs/core/runtime/dex-format#dalvik-opcodes
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, TypeIs
 
 from dexbuf.cursor import Cursor
 from dexbuf.instructions.formats import (
+    BranchInstruction,
     Format3rc,
     Format4rcc,
     Format10t,
@@ -35,6 +36,7 @@ from dexbuf.instructions.formats import (
     Format35c,
     Format45cc,
     Format51l,
+    HasId,
     Instruction,
 )
 from dexbuf.instructions.opcodes import Opcode
@@ -47,6 +49,7 @@ from dexbuf.items import (
     StringIdItem,
     TypeIdItem,
 )
+from dexbuf.types import Idx, Reg
 
 __all__ = [
     "OPCODE_MAP",
@@ -274,6 +277,14 @@ __all__ = [
     "XorIntLit16",
     "XorLong",
     "XorLong2Addr",
+    "get_id",
+    "has_id",
+    "is_branch",
+    "is_conditional_branch",
+    "is_return",
+    "is_switch",
+    "is_throw",
+    "is_unconditional_branch",
     "parse_instruction",
 ]
 
@@ -302,15 +313,27 @@ class Move16(Format32x):
 class MoveWide(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.MOVE_WIDE
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class MoveWideFrom16(Format22x):
     OPCODE: ClassVar[Opcode] = Opcode.MOVE_WIDE_FROM16
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class MoveWide16(Format32x):
     OPCODE: ClassVar[Opcode] = Opcode.MOVE_WIDE_16
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
@@ -337,6 +360,10 @@ class MoveResult(Format11x):
 class MoveResultWide(Format11x):
     OPCODE: ClassVar[Opcode] = Opcode.MOVE_RESULT_WIDE
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
 
 @dataclass(slots=True, frozen=True)
 class MoveResultObject(Format11x):
@@ -357,15 +384,43 @@ class ReturnVoid(Format10x):
 class Return(Format11x):
     OPCODE: ClassVar[Opcode] = Opcode.RETURN
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
+
 
 @dataclass(slots=True, frozen=True)
 class ReturnWide(Format11x):
     OPCODE: ClassVar[Opcode] = Opcode.RETURN_WIDE
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
 
 @dataclass(slots=True, frozen=True)
 class ReturnObject(Format11x):
     OPCODE: ClassVar[Opcode] = Opcode.RETURN_OBJECT
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -393,15 +448,27 @@ class ConstHigh16(Format21h):
 class ConstWide16(Format21s):
     OPCODE: ClassVar[Opcode] = Opcode.CONST_WIDE_16
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
 
 @dataclass(slots=True, frozen=True)
 class ConstWide32(Format31i):
     OPCODE: ClassVar[Opcode] = Opcode.CONST_WIDE_32
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
 
 @dataclass(slots=True, frozen=True)
 class ConstWide(Format51l):
     OPCODE: ClassVar[Opcode] = Opcode.CONST_WIDE
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
 
 
 @dataclass(slots=True, frozen=True)
@@ -409,40 +476,73 @@ class ConstWideHigh16(Format21h):
     OPCODE: ClassVar[Opcode] = Opcode.CONST_WIDE_HIGH16
     SHIFT: ClassVar[int] = 6
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
 
 @dataclass(slots=True, frozen=True)
 class ConstString(Format21c[StringIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.CONST_STRING
+    ITEM_TYPE: ClassVar[type[StringIdItem]] = StringIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class ConstStringJumbo(Format31c[StringIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.CONST_STRING_JUMBO
+    ITEM_TYPE: ClassVar[type[StringIdItem]] = StringIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class ConstClass(Format21c[TypeIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.CONST_CLASS
+    ITEM_TYPE: ClassVar[type[TypeIdItem]] = TypeIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class MonitorEnter(Format11x):
     OPCODE: ClassVar[Opcode] = Opcode.MONITOR_ENTER
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
+
 
 @dataclass(slots=True, frozen=True)
 class MonitorExit(Format11x):
     OPCODE: ClassVar[Opcode] = Opcode.MONITOR_EXIT
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
+
 
 @dataclass(slots=True, frozen=True)
 class CheckCast(Format21c[TypeIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.CHECK_CAST
+    ITEM_TYPE: ClassVar[type[TypeIdItem]] = TypeIdItem
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
 class InstanceOf(Format22c[TypeIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INSTANCE_OF
+    ITEM_TYPE: ClassVar[type[TypeIdItem]] = TypeIdItem
 
 
 @dataclass(slots=True, frozen=True)
@@ -453,21 +553,25 @@ class ArrayLength(Format12x):
 @dataclass(slots=True, frozen=True)
 class NewInstance(Format21c[TypeIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.NEW_INSTANCE
+    ITEM_TYPE: ClassVar[type[TypeIdItem]] = TypeIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class NewArray(Format22c[TypeIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.NEW_ARRAY
+    ITEM_TYPE: ClassVar[type[TypeIdItem]] = TypeIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class FilledNewArray(Format35c[TypeIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.FILLED_NEW_ARRAY
+    ITEM_TYPE: ClassVar[type[TypeIdItem]] = TypeIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class FilledNewArrayRange(Format3rc[TypeIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.FILLED_NEW_ARRAY_RANGE
+    ITEM_TYPE: ClassVar[type[TypeIdItem]] = TypeIdItem
 
 
 @dataclass(slots=True, frozen=True)
@@ -478,6 +582,14 @@ class FillArrayData(Format31t):
 @dataclass(slots=True, frozen=True)
 class Throw(Format11x):
     OPCODE: ClassVar[Opcode] = Opcode.THROW
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -519,15 +631,27 @@ class CmpgFloat(Format23x):
 class CmplDouble(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.CMPL_DOUBLE
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.b, self.c)
+
 
 @dataclass(slots=True, frozen=True)
 class CmpgDouble(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.CMPG_DOUBLE
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.b, self.c)
+
 
 @dataclass(slots=True, frozen=True)
 class CmpLong(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.CMP_LONG
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.b, self.c)
 
 
 @dataclass(slots=True, frozen=True)
@@ -599,6 +723,10 @@ class Aget(Format23x):
 class AgetWide(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.AGET_WIDE
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
 
 @dataclass(slots=True, frozen=True)
 class AgetObject(Format23x):
@@ -629,225 +757,451 @@ class AgetShort(Format23x):
 class Aput(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.APUT
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
+
 
 @dataclass(slots=True, frozen=True)
 class AputWide(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.APUT_WIDE
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
 
 
 @dataclass(slots=True, frozen=True)
 class AputObject(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.APUT_OBJECT
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
+
 
 @dataclass(slots=True, frozen=True)
 class AputBoolean(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.APUT_BOOLEAN
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
 class AputByte(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.APUT_BYTE
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
+
 
 @dataclass(slots=True, frozen=True)
 class AputChar(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.APUT_CHAR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
 class AputShort(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.APUT_SHORT
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
+
 
 @dataclass(slots=True, frozen=True)
 class Iget(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IGET
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IgetWide(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IGET_WIDE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
 
 
 @dataclass(slots=True, frozen=True)
 class IgetObject(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IGET_OBJECT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IgetBoolean(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IGET_BOOLEAN
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IgetByte(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IGET_BYTE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IgetChar(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IGET_CHAR
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IgetShort(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IGET_SHORT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class Iput(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IPUT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
 class IputWide(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IPUT_WIDE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
 
 
 @dataclass(slots=True, frozen=True)
 class IputObject(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IPUT_OBJECT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
 class IputBoolean(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IPUT_BOOLEAN
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
 class IputByte(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IPUT_BYTE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
 class IputChar(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IPUT_CHAR
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
 class IputShort(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IPUT_SHORT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
 class Sget(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SGET
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SgetWide(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SGET_WIDE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
 
 
 @dataclass(slots=True, frozen=True)
 class SgetObject(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SGET_OBJECT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SgetBoolean(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SGET_BOOLEAN
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SgetByte(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SGET_BYTE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SgetChar(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SGET_CHAR
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SgetShort(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SGET_SHORT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class Sput(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SPUT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
 class SputWide(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SPUT_WIDE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
 
 
 @dataclass(slots=True, frozen=True)
 class SputObject(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SPUT_OBJECT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
 class SputBoolean(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SPUT_BOOLEAN
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
 class SputByte(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SPUT_BYTE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
 class SputChar(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SPUT_CHAR
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
 class SputShort(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SPUT_SHORT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
+    @property
+    def written_registers(self) -> tuple[Reg, ...]:
+        return ()
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeVirtual(Format35c[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_VIRTUAL
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeSuper(Format35c[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_SUPER
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeDirect(Format35c[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_DIRECT
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeStatic(Format35c[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_STATIC
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeInterface(Format35c[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_INTERFACE
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeVirtualRange(Format3rc[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_VIRTUAL_RANGE
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeSuperRange(Format3rc[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_SUPER_RANGE
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeDirectRange(Format3rc[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_DIRECT_RANGE
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeStaticRange(Format3rc[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_STATIC_RANGE
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeInterfaceRange(Format3rc[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_INTERFACE_RANGE
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
@@ -864,10 +1218,18 @@ class NotInt(Format12x):
 class NegLong(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.NEG_LONG
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class NotLong(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.NOT_LONG
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
@@ -879,10 +1241,18 @@ class NegFloat(Format12x):
 class NegDouble(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.NEG_DOUBLE
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class IntToLong(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.INT_TO_LONG
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
 
 
 @dataclass(slots=True, frozen=True)
@@ -894,20 +1264,36 @@ class IntToFloat(Format12x):
 class IntToDouble(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.INT_TO_DOUBLE
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
 
 @dataclass(slots=True, frozen=True)
 class LongToInt(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.LONG_TO_INT
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.b,)
 
 
 @dataclass(slots=True, frozen=True)
 class LongToFloat(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.LONG_TO_FLOAT
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.b,)
+
 
 @dataclass(slots=True, frozen=True)
 class LongToDouble(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.LONG_TO_DOUBLE
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
@@ -919,20 +1305,36 @@ class FloatToInt(Format12x):
 class FloatToLong(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.FLOAT_TO_LONG
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
 
 @dataclass(slots=True, frozen=True)
 class FloatToDouble(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.FLOAT_TO_DOUBLE
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
 
 
 @dataclass(slots=True, frozen=True)
 class DoubleToInt(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.DOUBLE_TO_INT
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.b,)
+
 
 @dataclass(slots=True, frozen=True)
 class DoubleToLong(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.DOUBLE_TO_LONG
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
@@ -1014,55 +1416,99 @@ class UshrInt(Format23x):
 class AddLong(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.ADD_LONG
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
+
 
 @dataclass(slots=True, frozen=True)
 class SubLong(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.SUB_LONG
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
 
 
 @dataclass(slots=True, frozen=True)
 class MulLong(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.MUL_LONG
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
+
 
 @dataclass(slots=True, frozen=True)
 class DivLong(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.DIV_LONG
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
 
 
 @dataclass(slots=True, frozen=True)
 class RemLong(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.REM_LONG
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
+
 
 @dataclass(slots=True, frozen=True)
 class AndLong(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.AND_LONG
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
 
 
 @dataclass(slots=True, frozen=True)
 class OrLong(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.OR_LONG
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
+
 
 @dataclass(slots=True, frozen=True)
 class XorLong(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.XOR_LONG
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
 
 
 @dataclass(slots=True, frozen=True)
 class ShlLong(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.SHL_LONG
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class ShrLong(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.SHR_LONG
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class UshrLong(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.USHR_LONG
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
@@ -1094,185 +1540,397 @@ class RemFloat(Format23x):
 class AddDouble(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.ADD_DOUBLE
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
+
 
 @dataclass(slots=True, frozen=True)
 class SubDouble(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.SUB_DOUBLE
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
 
 
 @dataclass(slots=True, frozen=True)
 class MulDouble(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.MUL_DOUBLE
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
+
 
 @dataclass(slots=True, frozen=True)
 class DivDouble(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.DIV_DOUBLE
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
 
 
 @dataclass(slots=True, frozen=True)
 class RemDouble(Format23x):
     OPCODE: ClassVar[Opcode] = Opcode.REM_DOUBLE
 
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
+
 
 @dataclass(slots=True, frozen=True)
 class AddInt2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.ADD_INT_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
 class SubInt2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.SUB_INT_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class MulInt2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.MUL_INT_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
 class DivInt2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.DIV_INT_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class RemInt2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.REM_INT_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
 class AndInt2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.AND_INT_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class OrInt2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.OR_INT_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
 class XorInt2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.XOR_INT_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class ShlInt2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.SHL_INT_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
 class ShrInt2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.SHR_INT_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class UshrInt2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.USHR_INT_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
 class AddLong2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.ADD_LONG_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class SubLong2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.SUB_LONG_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
 class MulLong2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.MUL_LONG_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class DivLong2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.DIV_LONG_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
 class RemLong2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.REM_LONG_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class AndLong2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.AND_LONG_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
 class OrLong2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.OR_LONG_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class XorLong2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.XOR_LONG_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
 class ShlLong2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.SHL_LONG_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
 
 @dataclass(slots=True, frozen=True)
 class ShrLong2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.SHR_LONG_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
 
 
 @dataclass(slots=True, frozen=True)
 class UshrLong2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.USHR_LONG_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
 
 @dataclass(slots=True, frozen=True)
 class AddFloat2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.ADD_FLOAT_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
 class SubFloat2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.SUB_FLOAT_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class MulFloat2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.MUL_FLOAT_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
 class DivFloat2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.DIV_FLOAT_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class RemFloat2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.REM_FLOAT_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
 class AddDouble2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.ADD_DOUBLE_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class SubDouble2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.SUB_DOUBLE_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
 class MulDouble2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.MUL_DOUBLE_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class DivDouble2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.DIV_DOUBLE_2ADDR
 
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
 
 @dataclass(slots=True, frozen=True)
 class RemDouble2Addr(Format12x):
     OPCODE: ClassVar[Opcode] = Opcode.REM_DOUBLE_2ADDR
+
+    @property
+    def read_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
+    @property
+    def wide_registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
 
 @dataclass(slots=True, frozen=True)
@@ -1373,31 +2031,95 @@ class UshrIntLit8(Format22b):
 @dataclass(slots=True, frozen=True)
 class InvokePolymorphic(Format45cc):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_POLYMORPHIC
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokePolymorphicRange(Format4rcc):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_POLYMORPHIC_RANGE
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeCustom(Format35c[CallSiteIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_CUSTOM
+    ITEM_TYPE: ClassVar[type[CallSiteIdItem]] = CallSiteIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeCustomRange(Format3rc[CallSiteIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_CUSTOM_RANGE
+    ITEM_TYPE: ClassVar[type[CallSiteIdItem]] = CallSiteIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class ConstMethodHandle(Format21c[MethodHandleItem]):
     OPCODE: ClassVar[Opcode] = Opcode.CONST_METHOD_HANDLE
+    ITEM_TYPE: ClassVar[type[MethodHandleItem]] = MethodHandleItem
 
 
 @dataclass(slots=True, frozen=True)
 class ConstMethodType(Format21c[ProtoIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.CONST_METHOD_TYPE
+    ITEM_TYPE: ClassVar[type[ProtoIdItem]] = ProtoIdItem
+
+
+def has_id[T](inst: Instruction, item_type: type[T]) -> TypeIs[HasId[T]]:
+    """Return True if inst references a DEX item of type item_type."""
+    return isinstance(inst, HasId) and getattr(inst, "ITEM_TYPE", None) == item_type
+
+
+def get_id[T](inst: Instruction, item_type: type[T]) -> Idx[T] | None:
+    """Return the DEX item ID referenced by inst if it matches item_type, else None."""
+    if has_id(inst, item_type):
+        return inst.item_id
+    return None
+
+
+def is_branch(inst: Instruction) -> TypeIs[BranchInstruction]:
+    """Return True if inst is a branch instruction (has branch_offset)."""
+    return isinstance(inst, BranchInstruction)
+
+
+def is_conditional_branch(inst: Instruction) -> TypeIs[BranchInstruction]:
+    """Return True if inst is a conditional branch instruction."""
+    return isinstance(
+        inst,
+        (
+            IfEq,
+            IfNe,
+            IfLt,
+            IfGe,
+            IfGt,
+            IfLe,
+            IfEqz,
+            IfNez,
+            IfLtz,
+            IfGez,
+            IfGtz,
+            IfLez,
+        ),
+    )
+
+
+def is_unconditional_branch(inst: Instruction) -> TypeIs[BranchInstruction]:
+    """Return True if inst is an unconditional branch instruction."""
+    return isinstance(inst, (Goto, Goto16, Goto32))
+
+
+def is_return(inst: Instruction) -> TypeIs[ReturnVoid | Return | ReturnWide | ReturnObject]:
+    """Return True if inst is a return instruction."""
+    return isinstance(inst, (ReturnVoid, Return, ReturnWide, ReturnObject))
+
+
+def is_throw(inst: Instruction) -> TypeIs[Throw]:
+    """Return True if inst is a throw instruction."""
+    return isinstance(inst, Throw)
+
+
+def is_switch(inst: Instruction) -> TypeIs[PackedSwitch | SparseSwitch]:
+    """Return True if inst is a packed-switch or sparse-switch instruction."""
+    return isinstance(inst, (PackedSwitch, SparseSwitch))
 
 
 _ALL_INSTRUCTION_CLASSES: tuple[type[Instruction], ...] = (

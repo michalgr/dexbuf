@@ -6,6 +6,8 @@ from dexbuf.cursor import Cursor
 from dexbuf.instructions.definitions import (
     AddInt,
     AddIntLit8,
+    AddLong,
+    AddLong2Addr,
     Const,
     Const4,
     ConstHigh16,
@@ -28,7 +30,12 @@ from dexbuf.instructions.definitions import (
     Nop,
     Return,
 )
-from dexbuf.instructions.formats import Format4rcc, Format45cc
+from dexbuf.instructions.formats import (
+    BranchInstruction,
+    Format4rcc,
+    Format45cc,
+    HasId,
+)
 from dexbuf.items import FieldIdItem, StringIdItem
 from dexbuf.types import ArgumentCount, BranchOffset, Hat, Idx, Literal, Reg
 
@@ -296,6 +303,94 @@ class TestInstructionFormats(unittest.TestCase):
         self.assertEqual(parsed.c, 4)
         self.assertEqual(parsed.proto, 0x5678)
         self.assertEqual(parsed, inst)
+
+    def test_branch_instruction_protocol_and_branch_offset(self) -> None:
+        g10 = Goto(a=BranchOffset(10))
+        g20 = Goto16(a=BranchOffset(200))
+        g30 = Goto32(a=BranchOffset(30000))
+        ifeqz = IfEqz(a=Reg(1), b=BranchOffset(-5))
+        ifeq = IfEq(a=Reg(1), b=Reg(2), c=BranchOffset(15))
+
+        for inst, expected in [
+            (g10, 10),
+            (g20, 200),
+            (g30, 30000),
+            (ifeqz, -5),
+            (ifeq, 15),
+        ]:
+            self.assertIsInstance(inst, BranchInstruction)
+            self.assertEqual(inst.branch_offset, expected)
+
+    def test_has_id_protocol_and_item_id(self) -> None:
+        cs = ConstString(a=Reg(1), b=Idx[StringIdItem](42))
+        ig = Iget(a=Reg(1), b=Reg(2), c=Idx[FieldIdItem](99))
+        iv = InvokeVirtual(
+            a=ArgumentCount(2),
+            b=Idx(100),
+            c=Reg(1),
+            d=Reg(2),
+            e=Reg(0),
+            f=Reg(0),
+            g=Reg(0),
+        )
+        ivr = InvokeVirtualRange(a=ArgumentCount(3), b=Idx(200), c=Reg(5))
+        ip = InvokePolymorphic(
+            a=ArgumentCount(1),
+            b=Idx(300),
+            c=Reg(1),
+            d=Reg(0),
+            e=Reg(0),
+            f=Reg(0),
+            g=Reg(0),
+            proto=Idx(10),
+        )
+        ipr = InvokePolymorphicRange(a=ArgumentCount(2), b=Idx(400), c=Reg(3), proto=Idx(20))
+
+        self.assertIsInstance(cs, HasId)
+        self.assertEqual(cs.item_id, 42)
+        self.assertIsInstance(ig, HasId)
+        self.assertEqual(ig.item_id, 99)
+        self.assertIsInstance(iv, HasId)
+        self.assertEqual(iv.item_id, 100)
+        self.assertIsInstance(ivr, HasId)
+        self.assertEqual(ivr.item_id, 200)
+        self.assertIsInstance(ip, HasId)
+        self.assertEqual(ip.item_id, 300)
+        self.assertIsInstance(ipr, HasId)
+        self.assertEqual(ipr.item_id, 400)
+
+    def test_register_analysis_and_physical_expansions(self) -> None:
+        # 32-bit register operation: AddInt
+        add = AddInt(a=Reg(0), b=Reg(1), c=Reg(2))
+        self.assertEqual(add.registers, (0, 1, 2))
+        self.assertEqual(add.read_registers, (1, 2))
+        self.assertEqual(add.written_registers, (0,))
+        self.assertEqual(add.wide_registers, ())
+        self.assertFalse(add.is_wide_register(Reg(0)))
+        self.assertEqual(add.physical_read_registers, (1, 2))
+        self.assertEqual(add.physical_written_registers, (0,))
+        self.assertEqual(add.physical_registers, (0, 1, 2))
+
+        # 64-bit wide register operation: AddLong
+        add_long = AddLong(a=Reg(0), b=Reg(2), c=Reg(4))
+        self.assertEqual(add_long.registers, (0, 2, 4))
+        self.assertEqual(add_long.read_registers, (2, 4))
+        self.assertEqual(add_long.written_registers, (0,))
+        self.assertEqual(add_long.wide_registers, (0, 2, 4))
+        self.assertTrue(add_long.is_wide_register(Reg(0)))
+        self.assertTrue(add_long.is_wide_register(Reg(2)))
+        self.assertEqual(add_long.physical_read_registers, (2, 3, 4, 5))
+        self.assertEqual(add_long.physical_written_registers, (0, 1))
+        self.assertEqual(add_long.physical_registers, (0, 1, 2, 3, 4, 5))
+
+        # 64-bit wide 2addr operation: AddLong2Addr
+        add_long_2addr = AddLong2Addr(a=Reg(2), b=Reg(4))
+        self.assertEqual(add_long_2addr.registers, (2, 4))
+        self.assertEqual(add_long_2addr.read_registers, (2, 4))
+        self.assertEqual(add_long_2addr.written_registers, (2,))
+        self.assertEqual(add_long_2addr.wide_registers, (2, 4))
+        self.assertEqual(add_long_2addr.physical_read_registers, (2, 3, 4, 5))
+        self.assertEqual(add_long_2addr.physical_written_registers, (2, 3))
 
 
 if __name__ == "__main__":

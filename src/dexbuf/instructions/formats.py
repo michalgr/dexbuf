@@ -4,9 +4,8 @@ See https://source.android.com/docs/core/runtime/dex-format#dalvik-opcodes
 """
 
 import struct
-from abc import ABC
 from dataclasses import dataclass
-from typing import ClassVar, Self
+from typing import ClassVar, Protocol, Self, runtime_checkable
 
 from dexbuf.cursor import Cursor
 from dexbuf.instructions.opcodes import Opcode
@@ -48,9 +47,13 @@ __all__ = [
     "Format35c",
     "Format45cc",
     "Format51l",
+    "HasId",
+    "HasLiteral",
+    "HasTarget",
     "Instruction",
     "RefItem",
 ]
+
 
 type RefItem = (
     StringIdItem
@@ -63,9 +66,9 @@ type RefItem = (
 )
 
 
-@dataclass(slots=True, frozen=True)
-class Instruction(ABC):
-    """Abstract base class for all Dalvik instructions.
+@runtime_checkable
+class Instruction(Protocol):
+    """Protocol base interface for all Dalvik instructions.
 
     See https://source.android.com/docs/core/runtime/dex-format#dalvik-opcodes
     """
@@ -86,6 +89,30 @@ class Instruction(ABC):
     def to_bytes(self) -> bytes:
         """Encode this instruction to raw DEX bytes."""
         raise NotImplementedError
+
+
+@runtime_checkable
+class HasId[ItemT](Instruction, Protocol):
+    """Protocol for instructions referencing DEX items (strings, types, fields, methods)."""
+
+    @property
+    def item_id(self) -> Idx[ItemT]: ...
+
+
+@runtime_checkable
+class HasTarget(Instruction, Protocol):
+    """Protocol for branch instructions with a target relative offset."""
+
+    @property
+    def target(self) -> BranchOffset: ...
+
+
+@runtime_checkable
+class HasLiteral(Instruction, Protocol):
+    """Protocol for instructions with an embedded literal constant."""
+
+    @property
+    def literal(self) -> Literal | Hat | int: ...
 
 
 @dataclass(slots=True, frozen=True)
@@ -130,6 +157,10 @@ class Format11n(Instruction):
     a: Reg
     b: Literal
 
+    @property
+    def literal(self) -> Literal:
+        return self.b
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, ba = cursor.unpack(cls.STRUCT)
@@ -167,6 +198,10 @@ class Format10t(Instruction):
 
     a: BranchOffset
 
+    @property
+    def target(self) -> BranchOffset:
+        return self.a
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a = cursor.unpack(cls.STRUCT)
@@ -183,6 +218,10 @@ class Format20t(Instruction):
     STRUCT: ClassVar[struct.Struct] = struct.Struct("<BBh")
 
     a: BranchOffset
+
+    @property
+    def target(self) -> BranchOffset:
+        return self.a
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -220,6 +259,10 @@ class Format21t(Instruction):
     a: Reg
     b: BranchOffset
 
+    @property
+    def target(self) -> BranchOffset:
+        return self.b
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, b = cursor.unpack(cls.STRUCT)
@@ -237,6 +280,10 @@ class Format21s(Instruction):
 
     a: Reg
     b: Literal
+
+    @property
+    def literal(self) -> Literal:
+        return self.b
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -257,6 +304,10 @@ class Format21h(Instruction):
     a: Reg
     b: Hat
 
+    @property
+    def literal(self) -> Hat:
+        return self.b
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, val = cursor.unpack(cls.STRUCT)
@@ -275,6 +326,10 @@ class Format21c[RefT: RefItem](Instruction):
 
     a: Reg
     b: Idx[RefT]
+
+    @property
+    def item_id(self) -> Idx[RefT]:
+        return self.b
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -314,6 +369,10 @@ class Format22b(Instruction):
     b: Reg
     c: Literal
 
+    @property
+    def literal(self) -> Literal:
+        return self.c
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, b, c = cursor.unpack(cls.STRUCT)
@@ -332,6 +391,10 @@ class Format22t(Instruction):
     a: Reg
     b: Reg
     c: BranchOffset
+
+    @property
+    def target(self) -> BranchOffset:
+        return self.c
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -354,6 +417,10 @@ class Format22s(Instruction):
     b: Reg
     c: Literal
 
+    @property
+    def literal(self) -> Literal:
+        return self.c
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, ba, c = cursor.unpack(cls.STRUCT)
@@ -375,6 +442,10 @@ class Format22c[RefT: RefItem](Instruction):
     b: Reg
     c: Idx[RefT]
 
+    @property
+    def item_id(self) -> Idx[RefT]:
+        return self.c
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, ba, c = cursor.unpack(cls.STRUCT)
@@ -393,6 +464,10 @@ class Format30t(Instruction):
     STRUCT: ClassVar[struct.Struct] = struct.Struct("<BBi")
 
     a: BranchOffset
+
+    @property
+    def target(self) -> BranchOffset:
+        return self.a
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -430,6 +505,10 @@ class Format31i(Instruction):
     a: Reg
     b: Literal
 
+    @property
+    def literal(self) -> Literal:
+        return self.b
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, b = cursor.unpack(cls.STRUCT)
@@ -466,6 +545,10 @@ class Format31c[RefT: RefItem](Instruction):
     a: Reg
     b: Idx[RefT]
 
+    @property
+    def item_id(self) -> Idx[RefT]:
+        return self.b
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, b = cursor.unpack(cls.STRUCT)
@@ -488,6 +571,10 @@ class Format35c[RefT: RefItem](Instruction):
     e: Reg
     f: Reg
     g: Reg
+
+    @property
+    def item_id(self) -> Idx[RefT]:
+        return self.b
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -521,6 +608,10 @@ class Format3rc[RefT: RefItem](Instruction):
     b: Idx[RefT]
     c: Reg
 
+    @property
+    def item_id(self) -> Idx[RefT]:
+        return self.b
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, b, c = cursor.unpack(cls.STRUCT)
@@ -547,6 +638,10 @@ class Format45cc(Instruction):
     f: Reg
     g: Reg
     proto: Idx[ProtoIdItem]
+
+    @property
+    def item_id(self) -> Idx[MethodIdItem]:
+        return self.b
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -582,6 +677,10 @@ class Format4rcc(Instruction):
     c: Reg
     proto: Idx[ProtoIdItem]
 
+    @property
+    def item_id(self) -> Idx[MethodIdItem]:
+        return self.b
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, b, c, proto = cursor.unpack(cls.STRUCT)
@@ -604,6 +703,10 @@ class Format51l(Instruction):
 
     a: Reg
     b: Literal
+
+    @property
+    def literal(self) -> Literal:
+        return self.b
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:

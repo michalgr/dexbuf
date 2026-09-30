@@ -11,6 +11,7 @@ from dexbuf.instructions.definitions import (
     ConstHigh16,
     ConstString,
     ConstWide,
+    ConstWide16,
     ConstWideHigh16,
     Goto,
     Goto16,
@@ -28,7 +29,13 @@ from dexbuf.instructions.definitions import (
     Nop,
     Return,
 )
-from dexbuf.instructions.formats import Format4rcc, Format45cc
+from dexbuf.instructions.formats import (
+    Format4rcc,
+    Format45cc,
+    HasId,
+    HasLiteral,
+    HasTarget,
+)
 from dexbuf.items import FieldIdItem, StringIdItem
 from dexbuf.types import ArgumentCount, BranchOffset, Hat, Idx, Literal, Reg
 
@@ -296,6 +303,109 @@ class TestInstructionFormats(unittest.TestCase):
         self.assertEqual(parsed.c, 4)
         self.assertEqual(parsed.proto, 0x5678)
         self.assertEqual(parsed, inst)
+
+    def test_protocols_has_id(self) -> None:
+        inst_21c = ConstString(a=Reg(2), b=Idx[StringIdItem](0x1234))
+        self.assertIsInstance(inst_21c, HasId)
+        self.assertEqual(inst_21c.item_id, 0x1234)
+
+        inst_22c = Iget(a=Reg(1), b=Reg(2), c=Idx[FieldIdItem](0x00FF))
+        self.assertIsInstance(inst_22c, HasId)
+        self.assertEqual(inst_22c.item_id, 0x00FF)
+
+        inst_35c = InvokeVirtual(
+            a=ArgumentCount(1),
+            b=Idx(0x1000),
+            c=Reg(1),
+            d=Reg(0),
+            e=Reg(0),
+            f=Reg(0),
+            g=Reg(0),
+        )
+        self.assertIsInstance(inst_35c, HasId)
+        self.assertEqual(inst_35c.item_id, 0x1000)
+
+        inst_3rc = InvokeVirtualRange(
+            a=ArgumentCount(10),
+            b=Idx(0x0500),
+            c=Reg(12),
+        )
+        self.assertIsInstance(inst_3rc, HasId)
+        self.assertEqual(inst_3rc.item_id, 0x0500)
+
+        inst_45cc = InvokePolymorphic(
+            a=ArgumentCount(1),
+            b=Idx(0x1234),
+            c=Reg(1),
+            d=Reg(0),
+            e=Reg(0),
+            f=Reg(0),
+            g=Reg(0),
+            proto=Idx(0x5678),
+        )
+        self.assertIsInstance(inst_45cc, HasId)
+        self.assertEqual(inst_45cc.item_id, 0x1234)
+
+        inst_4rcc = InvokePolymorphicRange(
+            a=ArgumentCount(8),
+            b=Idx(0x1234),
+            c=Reg(4),
+            proto=Idx(0x5678),
+        )
+        self.assertIsInstance(inst_4rcc, HasId)
+        self.assertEqual(inst_4rcc.item_id, 0x1234)
+
+        self.assertNotIsInstance(Nop(), HasId)
+
+    def test_protocols_has_target(self) -> None:
+        inst_10t = Goto(a=BranchOffset(-10))
+        self.assertIsInstance(inst_10t, HasTarget)
+        self.assertEqual(inst_10t.target, -10)
+
+        inst_20t = Goto16(a=BranchOffset(-1000))
+        self.assertIsInstance(inst_20t, HasTarget)
+        self.assertEqual(inst_20t.target, -1000)
+
+        inst_30t = Goto32(a=BranchOffset(-100000))
+        self.assertIsInstance(inst_30t, HasTarget)
+        self.assertEqual(inst_30t.target, -100000)
+
+        inst_21t = IfEqz(a=Reg(5), b=BranchOffset(-200))
+        self.assertIsInstance(inst_21t, HasTarget)
+        self.assertEqual(inst_21t.target, -200)
+
+        inst_22t = IfEq(a=Reg(3), b=Reg(4), c=BranchOffset(50))
+        self.assertIsInstance(inst_22t, HasTarget)
+        self.assertEqual(inst_22t.target, 50)
+
+        self.assertNotIsInstance(Nop(), HasTarget)
+
+    def test_protocols_has_literal(self) -> None:
+        inst_11n = Const4(a=Reg(2), b=Literal(7))
+        self.assertIsInstance(inst_11n, HasLiteral)
+        self.assertEqual(inst_11n.literal, 7)
+
+        inst_21s = ConstWide16(a=Reg(1), b=Literal(-500))
+        self.assertIsInstance(inst_21s, HasLiteral)
+        self.assertEqual(inst_21s.literal, -500)
+
+        inst_21h = ConstHigh16(a=Reg(4), b=Hat(0x1234_0000))
+        self.assertIsInstance(inst_21h, HasLiteral)
+        self.assertEqual(inst_21h.literal, 0x1234_0000)
+
+        inst_31i = Const(a=Reg(5), b=Literal(-12345678))
+        self.assertIsInstance(inst_31i, HasLiteral)
+        self.assertEqual(inst_31i.literal, -12345678)
+
+        inst_51l = ConstWide(a=Reg(8), b=Literal(-100000000000))
+        self.assertIsInstance(inst_51l, HasLiteral)
+        self.assertEqual(inst_51l.literal, -100000000000)
+
+        inst_22b = AddIntLit8(a=Reg(10), b=Reg(11), c=Literal(-42))
+        self.assertIsInstance(inst_22b, HasLiteral)
+        self.assertEqual(inst_22b.literal, -42)
+
+        self.assertNotIsInstance(Nop(), HasLiteral)
 
 
 if __name__ == "__main__":

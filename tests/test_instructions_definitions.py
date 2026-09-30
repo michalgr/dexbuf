@@ -11,14 +11,34 @@ from dexbuf.instructions.definitions import (
     AddInt,
     Const,
     Const4,
+    ConstClass,
     ConstString,
+    Goto,
+    IfEq,
     InvokePolymorphic,
     InvokePolymorphicRange,
     Nop,
+    PackedSwitch,
+    Return,
+    ReturnObject,
     ReturnVoid,
+    ReturnWide,
+    SparseSwitch,
+    Throw,
+    get_id,
+    get_literal,
+    has_id,
+    has_literal,
+    is_branch,
+    is_conditional_branch,
+    is_return,
+    is_switch,
+    is_throw,
+    is_unconditional_branch,
     parse_instruction,
 )
-from dexbuf.types import ArgumentCount, Idx, Literal, Reg
+from dexbuf.items import StringIdItem, TypeIdItem
+from dexbuf.types import ArgumentCount, BranchOffset, Idx, Literal, Reg
 
 
 class TestInstructionDefinitions(unittest.TestCase):
@@ -94,6 +114,80 @@ class TestInstructionDefinitions(unittest.TestCase):
         iop = parse_iop(Cursor(raw_ret))
         self.assertIsInstance(iop, ReturnVoid)
         self.assertEqual(iop, ReturnVoid())
+
+    def test_has_id_and_get_id(self) -> None:
+        cs = ConstString(a=Reg(1), b=Idx[StringIdItem](42))
+        cc = ConstClass(a=Reg(2), b=Idx[TypeIdItem](99))
+        nop = Nop()
+
+        self.assertTrue(has_id(cs))
+        self.assertTrue(has_id(cs, StringIdItem))
+        self.assertFalse(has_id(cs, TypeIdItem))
+        self.assertEqual(get_id(cs), 42)
+        self.assertEqual(get_id(cs, StringIdItem), 42)
+        self.assertIsNone(get_id(cs, TypeIdItem))
+
+        self.assertTrue(has_id(cc))
+        self.assertTrue(has_id(cc, TypeIdItem))
+        self.assertFalse(has_id(cc, StringIdItem))
+        self.assertEqual(get_id(cc), 99)
+        self.assertEqual(get_id(cc, TypeIdItem), 99)
+        self.assertIsNone(get_id(cc, StringIdItem))
+
+        self.assertFalse(has_id(nop))
+        self.assertFalse(has_id(nop, StringIdItem))
+        self.assertIsNone(get_id(nop))
+        self.assertIsNone(get_id(nop, StringIdItem))
+
+    def test_branch_guards(self) -> None:
+        goto = Goto(a=BranchOffset(-5))
+        ifeq = IfEq(a=Reg(1), b=Reg(2), c=BranchOffset(10))
+        nop = Nop()
+
+        self.assertTrue(is_branch(goto))
+        self.assertTrue(is_branch(ifeq))
+        self.assertFalse(is_branch(nop))
+
+        self.assertTrue(is_unconditional_branch(goto))
+        self.assertFalse(is_unconditional_branch(ifeq))
+        self.assertFalse(is_unconditional_branch(nop))
+
+        self.assertTrue(is_conditional_branch(ifeq))
+        self.assertFalse(is_conditional_branch(goto))
+        self.assertFalse(is_conditional_branch(nop))
+
+    def test_literal_guards(self) -> None:
+        c4 = Const4(a=Reg(1), b=Literal(3))
+        nop = Nop()
+
+        self.assertTrue(has_literal(c4))
+        self.assertEqual(get_literal(c4), 3)
+
+        self.assertFalse(has_literal(nop))
+        self.assertIsNone(get_literal(nop))
+
+    def test_control_flow_guards(self) -> None:
+        rv = ReturnVoid()
+        ret = Return(a=Reg(1))
+        rw = ReturnWide(a=Reg(1))
+        ro = ReturnObject(a=Reg(1))
+        th = Throw(a=Reg(1))
+        ps = PackedSwitch(a=Reg(1), b=BranchOffset(20))
+        ss = SparseSwitch(a=Reg(1), b=BranchOffset(20))
+        nop = Nop()
+
+        self.assertTrue(is_return(rv))
+        self.assertTrue(is_return(ret))
+        self.assertTrue(is_return(rw))
+        self.assertTrue(is_return(ro))
+        self.assertFalse(is_return(nop))
+
+        self.assertTrue(is_throw(th))
+        self.assertFalse(is_throw(nop))
+
+        self.assertTrue(is_switch(ps))
+        self.assertTrue(is_switch(ss))
+        self.assertFalse(is_switch(nop))
 
 
 if __name__ == "__main__":

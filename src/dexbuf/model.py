@@ -20,12 +20,13 @@ from dexbuf.descriptors import (
 from dexbuf.dex import DexFile
 from dexbuf.flags import AccessFlags
 from dexbuf.instructions import (
-    IOP,
     Opcode,
     PackedSwitchPayload,
+    Payload,
     SparseSwitchPayload,
     get_id,
     get_literal,
+    get_registers,
     has_id,
     is_branch,
     is_conditional_branch,
@@ -35,10 +36,6 @@ from dexbuf.instructions import (
     is_unconditional_branch,
 )
 from dexbuf.instructions.formats import (
-    Format3rc,
-    Format4rcc,
-    Format35c,
-    Format45cc,
     HasTarget,
     Instruction,
 )
@@ -1221,15 +1218,16 @@ def open(path: str | os.PathLike[str], *, mmap: bool = True) -> ClassLoader:
 
 
 class CodeInstruction:
-    """High-level Dalvik bytecode instruction model wrapping an IOP with PC context."""
+    """High-level Dalvik bytecode instruction model wrapping an Instruction with PC context."""
 
-    __slots__ = ("_iop", "_method", "_next_pc", "_pc")
+    __slots__ = ("_insn", "_method", "_next_pc", "_payload", "_pc")
 
-    def __init__(self, method: Method, pc: int, iop: IOP, next_pc: int) -> None:
+    def __init__(self, method: Method, pc: int, insn: Instruction, next_pc: int) -> None:
         self._method: Method = method
         self._pc: int = pc
-        self._iop: IOP = iop
+        self._insn: Instruction = insn
         self._next_pc: int = next_pc
+        self._payload: Payload | None = None
 
     @property
     def pc(self) -> int:
@@ -1241,13 +1239,11 @@ class CodeInstruction:
 
     @property
     def code_units(self) -> int:
-        return self._iop.code_units
+        return self._insn.code_units
 
     @property
     def opcode(self) -> Opcode:
-        if isinstance(self._iop, Instruction):
-            return self._iop.OPCODE
-        return Opcode(self._iop.IDENT)
+        return self._insn.OPCODE
 
     @property
     def mnemonic(self) -> str:
@@ -1255,71 +1251,7 @@ class CodeInstruction:
 
     @property
     def registers(self) -> tuple[Reg, ...]:
-        iop = self._iop
-        if not isinstance(iop, Instruction):
-            return ()
-        if isinstance(iop, (Format35c, Format45cc)):
-            count = int(iop.a)
-            regs = (iop.c, iop.d, iop.e, iop.f, iop.g)
-            return regs[:count]
-        if isinstance(iop, (Format3rc, Format4rcc)):
-            count = int(iop.a)
-            start = int(iop.c)
-            return tuple(Reg(start + i) for i in range(count))
-
-        from dexbuf.instructions.formats import (
-            Format11n,
-            Format11x,
-            Format12x,
-            Format21c,
-            Format21h,
-            Format21s,
-            Format21t,
-            Format22b,
-            Format22c,
-            Format22s,
-            Format22t,
-            Format22x,
-            Format23x,
-            Format31c,
-            Format31i,
-            Format31t,
-            Format32x,
-            Format51l,
-        )
-
-        if isinstance(iop, Format23x):
-            return (iop.a, iop.b, iop.c)
-        if isinstance(
-            iop,
-            (
-                Format12x,
-                Format22x,
-                Format22b,
-                Format22t,
-                Format22s,
-                Format22c,
-                Format32x,
-            ),
-        ):
-            return (iop.a, iop.b)
-        if isinstance(
-            iop,
-            (
-                Format11x,
-                Format11n,
-                Format21t,
-                Format21s,
-                Format21h,
-                Format21c,
-                Format31i,
-                Format31t,
-                Format31c,
-                Format51l,
-            ),
-        ):
-            return (iop.a,)
-        return ()
+        return get_registers(self._insn)
 
     @property
     def register_names(self) -> tuple[str, ...]:
@@ -1330,32 +1262,32 @@ class CodeInstruction:
 
     @property
     def is_branch(self) -> bool:
-        return is_branch(self._iop) if isinstance(self._iop, Instruction) else False
+        return is_branch(self._insn)
 
     @property
     def is_conditional_branch(self) -> bool:
-        return is_conditional_branch(self._iop) if isinstance(self._iop, Instruction) else False
+        return is_conditional_branch(self._insn)
 
     @property
     def is_unconditional_branch(self) -> bool:
-        return is_unconditional_branch(self._iop) if isinstance(self._iop, Instruction) else False
+        return is_unconditional_branch(self._insn)
 
     @property
     def is_switch(self) -> bool:
-        return is_switch(self._iop) if isinstance(self._iop, Instruction) else False
+        return is_switch(self._insn)
 
     @property
     def is_return(self) -> bool:
-        return is_return(self._iop) if isinstance(self._iop, Instruction) else False
+        return is_return(self._insn)
 
     @property
     def is_throw(self) -> bool:
-        return is_throw(self._iop) if isinstance(self._iop, Instruction) else False
+        return is_throw(self._insn)
 
     @property
     def branch_offset(self) -> int | None:
-        if isinstance(self._iop, HasTarget):
-            return int(self._iop.target)
+        if isinstance(self._insn, HasTarget):
+            return int(self._insn.target)
         return None
 
     @property
@@ -1366,17 +1298,39 @@ class CodeInstruction:
         return None
 
     @property
+    def payload(self) -> Payload | None:
+        """Associated payload for switch or fill-array-data instructions, or None."""
+        return self._payload
+
+    @property
+    def next_pcs(self) -> tuple[int, ...]:
+        """Control flow successor program counters for this instruction."""
+        if self.is_return or self.is_throw:
+            return ()
+        if self.is_unconditional_branch:
+            return (self.target_pc,) if self.target_pc is not None else ()
+        if self.is_conditional_branch:
+            return (self.next_pc, self.target_pc) if self.target_pc is not None else (self.next_pc,)
+        if self.is_switch:
+            targets: list[int] = [self.next_pc]
+            if isinstance(self._payload, (PackedSwitchPayload, SparseSwitchPayload)):
+                for target_offset in self._payload.targets:
+                    targets.append(self._pc + int(target_offset))
+            return tuple(targets)
+        return (self.next_pc,)
+
+    @property
     def string_value(self) -> str | None:
-        if isinstance(self._iop, Instruction) and has_id(self._iop, StringIdItem):
-            id_val = get_id(self._iop, StringIdItem)
+        if has_id(self._insn, StringIdItem):
+            id_val = get_id(self._insn, StringIdItem)
             if id_val is not None:
                 return self._method.defining_class.dex_file.get_string(id_val)
         return None
 
     @property
     def type_descriptor(self) -> Descriptor | None:
-        if isinstance(self._iop, Instruction) and has_id(self._iop, TypeIdItem):
-            id_val = get_id(self._iop, TypeIdItem)
+        if has_id(self._insn, TypeIdItem):
+            id_val = get_id(self._insn, TypeIdItem)
             if id_val is not None:
                 return self._method.defining_class.dex_file.get_type_descriptor(id_val)
         return None
@@ -1391,8 +1345,8 @@ class CodeInstruction:
 
     @property
     def field_id(self) -> FieldIdItem | None:
-        if isinstance(self._iop, Instruction) and has_id(self._iop, FieldIdItem):
-            id_val = get_id(self._iop, FieldIdItem)
+        if has_id(self._insn, FieldIdItem):
+            id_val = get_id(self._insn, FieldIdItem)
             if id_val is not None:
                 return self._method.defining_class.dex_file.get_field_id(id_val)
         return None
@@ -1413,8 +1367,8 @@ class CodeInstruction:
 
     @property
     def method_id(self) -> MethodIdItem | None:
-        if isinstance(self._iop, Instruction) and has_id(self._iop, MethodIdItem):
-            id_val = get_id(self._iop, MethodIdItem)
+        if has_id(self._insn, MethodIdItem):
+            id_val = get_id(self._insn, MethodIdItem)
             if id_val is not None:
                 return self._method.defining_class.dex_file.get_method_id(id_val)
         return None
@@ -1442,15 +1396,15 @@ class CodeInstruction:
 
     @property
     def literal(self) -> int | None:
-        return get_literal(self._iop) if isinstance(self._iop, Instruction) else None
+        return get_literal(self._insn)
 
     @property
-    def raw(self) -> IOP:
-        return self._iop
+    def raw(self) -> Instruction:
+        return self._insn
 
     @property
-    def raw_instruction(self) -> Instruction | None:
-        return self._iop if isinstance(self._iop, Instruction) else None
+    def raw_instruction(self) -> Instruction:
+        return self._insn
 
     def __repr__(self) -> str:
         return f"<CodeInstruction 0x{self._pc:04x}: {self.mnemonic}>"
@@ -1642,6 +1596,8 @@ class Code:
         "_instructions",
         "_item",
         "_method",
+        "_payload_map",
+        "_payloads",
         "_pc_map",
         "_try_catches",
     )
@@ -1650,19 +1606,28 @@ class Code:
         self._method: Method = method
         self._item: CodeItem = item
 
-        # Parse instructions and construct pc_map
-        insts: list[CodeInstruction] = []
-        pc_map: dict[int, CodeInstruction] = {}
+        # Parse instructions and payloads
+        instructions: list[CodeInstruction] = []
+        payload_map: dict[int, Payload] = {}
         cursor_pc = 0
         for iop in item.insns:
             next_pc = cursor_pc + iop.code_units
-            inst = CodeInstruction(method, cursor_pc, iop, next_pc)
-            insts.append(inst)
-            pc_map[cursor_pc] = inst
+            if isinstance(iop, Instruction):
+                inst = CodeInstruction(method, cursor_pc, iop, next_pc)
+                instructions.append(inst)
+            else:
+                payload_map[cursor_pc] = iop
             cursor_pc = next_pc
 
-        self._instructions: tuple[CodeInstruction, ...] = tuple(insts)
-        self._pc_map: dict[int, CodeInstruction] = pc_map
+        for inst in instructions:
+            if inst.is_switch or inst.opcode == Opcode.FILL_ARRAY_DATA:
+                if inst.target_pc is not None and inst.target_pc in payload_map:
+                    inst._payload = payload_map[inst.target_pc]
+
+        self._instructions: tuple[CodeInstruction, ...] = tuple(instructions)
+        self._pc_map: dict[int, CodeInstruction] = {inst.pc: inst for inst in instructions}
+        self._payloads: tuple[Payload, ...] = tuple(payload_map.values())
+        self._payload_map: dict[int, Payload] = payload_map
 
         # Parse TryCatches
         tc_list: list[TryCatch] = []
@@ -1696,28 +1661,10 @@ class Code:
 
         leaders: set[int] = {0}
         for inst in instructions:
-            if inst.is_branch:
-                if inst.target_pc is not None and inst.target_pc in pc_map:
-                    leaders.add(inst.target_pc)
-                if inst.next_pc in pc_map:
-                    leaders.add(inst.next_pc)
-            elif inst.is_switch:
-                if inst.next_pc in pc_map:
-                    leaders.add(inst.next_pc)
-                if inst.target_pc is not None and inst.target_pc in pc_map:
-                    payload_inst = pc_map[inst.target_pc]
-                    raw_payload = payload_inst.raw
-                    if isinstance(raw_payload, PackedSwitchPayload):
-                        for target_offset in raw_payload.targets:
-                            target_pc = inst.pc + int(target_offset)
-                            if target_pc in pc_map:
-                                leaders.add(target_pc)
-                    elif isinstance(raw_payload, SparseSwitchPayload):
-                        for target_offset in raw_payload.targets:
-                            target_pc = inst.pc + int(target_offset)
-                            if target_pc in pc_map:
-                                leaders.add(target_pc)
-            elif inst.is_return or inst.is_throw:
+            for pc in inst.next_pcs:
+                if pc in pc_map:
+                    leaders.add(pc)
+            if inst.is_unconditional_branch or inst.is_return or inst.is_throw:
                 if inst.next_pc in pc_map:
                     leaders.add(inst.next_pc)
 
@@ -1766,41 +1713,12 @@ class Code:
 
         for block in blocks_list:
             term = block.terminator
-            succ_pcs: list[int] = []
-
-            if term.is_conditional_branch:
-                if term.target_pc is not None:
-                    succ_pcs.append(term.target_pc)
-                if term.next_pc in pc_map:
-                    succ_pcs.append(term.next_pc)
-            elif term.is_unconditional_branch:
-                if term.target_pc is not None:
-                    succ_pcs.append(term.target_pc)
-            elif term.is_switch:
-                if term.next_pc in pc_map:
-                    succ_pcs.append(term.next_pc)
-                if term.target_pc is not None and term.target_pc in pc_map:
-                    payload_inst = pc_map[term.target_pc]
-                    raw_payload = payload_inst.raw
-                    if isinstance(raw_payload, PackedSwitchPayload):
-                        for target_offset in raw_payload.targets:
-                            succ_pcs.append(term.pc + int(target_offset))
-                    elif isinstance(raw_payload, SparseSwitchPayload):
-                        for target_offset in raw_payload.targets:
-                            succ_pcs.append(term.pc + int(target_offset))
-            elif term.is_return or term.is_throw:
-                pass
-            else:
-                if term.next_pc in pc_map:
-                    succ_pcs.append(term.next_pc)
-
-            for spc in succ_pcs:
-                if spc in block_by_start_pc:
-                    target_block = block_by_start_pc[spc]
-                    if target_block not in succs_map[block.id]:
-                        succs_map[block.id].append(target_block)
-                    if block not in preds_map[target_block.id]:
-                        preds_map[target_block.id].append(block)
+            succ_blocks = [block_by_start_pc[pc] for pc in term.next_pcs if pc in block_by_start_pc]
+            for target_block in succ_blocks:
+                if target_block not in succs_map[block.id]:
+                    succs_map[block.id].append(target_block)
+                if block not in preds_map[target_block.id]:
+                    preds_map[target_block.id].append(block)
 
         for block in blocks_list:
             block._predecessors = tuple(preds_map[block.id])
@@ -1842,6 +1760,13 @@ class Code:
     @property
     def instructions(self) -> tuple[CodeInstruction, ...]:
         return self._instructions
+
+    @property
+    def payloads(self) -> tuple[Payload, ...]:
+        return self._payloads
+
+    def get_payload(self, pc: int, default: Payload | None = None) -> Payload | None:
+        return self._payload_map.get(pc, default)
 
     def at(self, pc: int) -> CodeInstruction:
         inst = self._pc_map.get(pc)

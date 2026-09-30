@@ -51,7 +51,7 @@ from dexbuf.items import (
     StringIdItem,
     TypeIdItem,
 )
-from dexbuf.types import Idx
+from dexbuf.types import Idx, Reg
 
 type ConditionalBranch = Format21t | Format22t
 type UnconditionalBranch = Format10t | Format20t | Format30t
@@ -286,6 +286,7 @@ __all__ = [
     "XorLong2Addr",
     "get_id",
     "get_literal",
+    "get_registers",
     "has_id",
     "has_literal",
     "is_branch",
@@ -1776,3 +1777,46 @@ def is_throw(inst: Instruction) -> TypeIs[Throw]:
 
 def is_switch(inst: Instruction) -> TypeIs[PackedSwitch | SparseSwitch]:
     return isinstance(inst, (PackedSwitch, SparseSwitch))
+
+
+def get_registers(inst: Instruction) -> tuple[Reg, ...]:
+    if isinstance(inst, (Format35c, Format45cc)):
+        count = int(inst.a)
+        regs = (inst.c, inst.d, inst.e, inst.f, inst.g)
+        return regs[:count]
+    if isinstance(inst, (Format3rc, Format4rcc)):
+        count = int(inst.a)
+        start = int(inst.c)
+        return tuple(Reg(start + i) for i in range(count))
+    if isinstance(inst, Format23x):
+        return (inst.a, inst.b, inst.c)
+    if isinstance(
+        inst,
+        (
+            Format12x,
+            Format22x,
+            Format22b,
+            Format22t,
+            Format22s,
+            Format22c,
+            Format32x,
+        ),
+    ):
+        return (inst.a, inst.b)
+    if isinstance(
+        inst,
+        (
+            Format11x,
+            Format11n,
+            Format21t,
+            Format21s,
+            Format21h,
+            Format21c,
+            Format31i,
+            Format31t,
+            Format31c,
+            Format51l,
+        ),
+    ):
+        return (inst.a,)
+    return ()

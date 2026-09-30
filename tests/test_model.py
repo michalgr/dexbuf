@@ -2181,6 +2181,75 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         with self.assertRaises(TypeError):
             _ = block[0]  # type: ignore[typeddict-item]
 
+    def test_payload_decoupling_next_pcs_and_switch_cfg(self) -> None:
+        from dexbuf.instructions import PackedSwitch, ReturnVoid
+        from dexbuf.instructions.payloads import PackedSwitchPayload
+        from dexbuf.types import BranchOffset, Reg
+
+        # Build code stream with packed-switch, return-void, packed-switch-payload
+        # PC 0: packed-switch v0, +4 (target payload is at PC 4)
+        sw_insn = PackedSwitch(a=Reg(0), b=BranchOffset(4))
+        ret_insn = ReturnVoid()
+        payload = PackedSwitchPayload(first_key=0, targets=(BranchOffset(3), BranchOffset(12)))
+
+        code_stream = (
+            sw_insn.to_bytes()
+            + ret_insn.to_bytes()
+            + payload.to_bytes()
+            + ret_insn.to_bytes()
+            + ret_insn.to_bytes()
+        )
+
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/SwitchTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "direct_methods": [
+                        {
+                            "name": "run",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": 1,
+                            "code": code_stream,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        m = loader["com.example.SwitchTest"].get_method("run")
+        assert m is not None and m.code is not None
+        code = m.code
+
+        # Verify instructions contains zero payloads
+        self.assertTrue(
+            all(not isinstance(inst.raw, PackedSwitchPayload) for inst in code.instructions)
+        )
+
+        # Verify payloads collection and lookup
+        self.assertEqual(len(code.payloads), 1)
+        self.assertIsInstance(code.payloads[0], PackedSwitchPayload)
+        self.assertEqual(code.get_payload(4), payload)
+        self.assertIsNone(code.get_payload(0))
+
+        # Verify CodeInstruction.payload linking on referring switch instruction
+        sw_code_inst = code.at(0)
+        self.assertEqual(sw_code_inst.payload, payload)
+        self.assertEqual(sw_code_inst.raw, sw_insn)
+
+        # Verify CodeInstruction.next_pcs
+        self.assertEqual(sw_code_inst.next_pcs, (3, 3, 12))
+        ret_code_inst = code.at(3)
+        self.assertEqual(ret_code_inst.next_pcs, ())
+
+        # Verify basic block successors
+        entry_block = code.entry_block
+        succ_pcs = {succ.start_pc for succ in entry_block.successors}
+        self.assertIn(3, succ_pcs)
+        self.assertIn(12, succ_pcs)
+
 
 if __name__ == "__main__":
     unittest.main()

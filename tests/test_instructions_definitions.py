@@ -18,6 +18,9 @@ from dexbuf.instructions.definitions import (
     Instruction,
     InvokePolymorphic,
     InvokePolymorphicRange,
+    InvokeVirtual,
+    InvokeVirtualRange,
+    Move,
     Nop,
     PackedSwitch,
     Return,
@@ -28,6 +31,7 @@ from dexbuf.instructions.definitions import (
     Throw,
     get_id,
     get_literal,
+    get_registers,
     has_id,
     has_literal,
     is_branch,
@@ -208,6 +212,38 @@ class TestInstructionDefinitions(unittest.TestCase):
         self.assertTrue(is_switch(packed_sw))
         self.assertTrue(is_switch(sparse_sw))
         self.assertFalse(is_switch(nop))
+
+    def test_get_registers(self) -> None:
+        """Verify get_registers helper extracts correct registers across instruction formats."""
+        inv_35c = InvokeVirtual(
+            a=ArgumentCount(3),
+            b=Idx(0),
+            c=Reg(1),
+            d=Reg(2),
+            e=Reg(3),
+            f=Reg(0),
+            g=Reg(0),
+        )
+        self.assertEqual(get_registers(inv_35c), (Reg(1), Reg(2), Reg(3)))
+
+        inv_3rc = InvokeVirtualRange(
+            a=ArgumentCount(4),
+            b=Idx(0),
+            c=Reg(5),
+        )
+        self.assertEqual(get_registers(inv_3rc), (Reg(5), Reg(6), Reg(7), Reg(8)))
+
+        add_23x = AddInt(a=Reg(1), b=Reg(2), c=Reg(3))
+        self.assertEqual(get_registers(add_23x), (Reg(1), Reg(2), Reg(3)))
+
+        move_12x = Move(a=Reg(4), b=Reg(5))
+        self.assertEqual(get_registers(move_12x), (Reg(4), Reg(5)))
+
+        ret_11x = Return(a=Reg(7))
+        self.assertEqual(get_registers(ret_11x), (Reg(7),))
+
+        nop = Nop()
+        self.assertEqual(get_registers(nop), ())
 
 
 if __name__ == "__main__":

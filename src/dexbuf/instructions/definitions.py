@@ -5,7 +5,7 @@ See https://source.android.com/docs/core/runtime/dex-format#dalvik-opcodes
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, TypeIs, overload
 
 from dexbuf.cursor import Cursor
 from dexbuf.instructions.formats import (
@@ -35,7 +35,11 @@ from dexbuf.instructions.formats import (
     Format35c,
     Format45cc,
     Format51l,
+    HasId,
+    HasLiteral,
+    HasTarget,
     Instruction,
+    RefItem,
 )
 from dexbuf.instructions.opcodes import Opcode
 from dexbuf.items import (
@@ -47,6 +51,10 @@ from dexbuf.items import (
     StringIdItem,
     TypeIdItem,
 )
+from dexbuf.types import Idx
+
+type ConditionalBranch = Format21t | Format22t
+type UnconditionalBranch = Format10t | Format20t | Format30t
 
 __all__ = [
     "OPCODE_MAP",
@@ -87,6 +95,7 @@ __all__ = [
     "CmpgFloat",
     "CmplDouble",
     "CmplFloat",
+    "ConditionalBranch",
     "Const",
     "Const4",
     "Const16",
@@ -263,6 +272,7 @@ __all__ = [
     "SubLong",
     "SubLong2Addr",
     "Throw",
+    "UnconditionalBranch",
     "UshrInt",
     "UshrInt2Addr",
     "UshrIntLit8",
@@ -274,6 +284,16 @@ __all__ = [
     "XorIntLit16",
     "XorLong",
     "XorLong2Addr",
+    "get_id",
+    "get_literal",
+    "has_id",
+    "has_literal",
+    "is_branch",
+    "is_conditional_branch",
+    "is_return",
+    "is_switch",
+    "is_throw",
+    "is_unconditional_branch",
     "parse_instruction",
 ]
 
@@ -413,16 +433,19 @@ class ConstWideHigh16(Format21h):
 @dataclass(slots=True, frozen=True)
 class ConstString(Format21c[StringIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.CONST_STRING
+    ITEM_TYPE: ClassVar[type[StringIdItem]] = StringIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class ConstStringJumbo(Format31c[StringIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.CONST_STRING_JUMBO
+    ITEM_TYPE: ClassVar[type[StringIdItem]] = StringIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class ConstClass(Format21c[TypeIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.CONST_CLASS
+    ITEM_TYPE: ClassVar[type[TypeIdItem]] = TypeIdItem
 
 
 @dataclass(slots=True, frozen=True)
@@ -438,11 +461,13 @@ class MonitorExit(Format11x):
 @dataclass(slots=True, frozen=True)
 class CheckCast(Format21c[TypeIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.CHECK_CAST
+    ITEM_TYPE: ClassVar[type[TypeIdItem]] = TypeIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InstanceOf(Format22c[TypeIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INSTANCE_OF
+    ITEM_TYPE: ClassVar[type[TypeIdItem]] = TypeIdItem
 
 
 @dataclass(slots=True, frozen=True)
@@ -453,21 +478,25 @@ class ArrayLength(Format12x):
 @dataclass(slots=True, frozen=True)
 class NewInstance(Format21c[TypeIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.NEW_INSTANCE
+    ITEM_TYPE: ClassVar[type[TypeIdItem]] = TypeIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class NewArray(Format22c[TypeIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.NEW_ARRAY
+    ITEM_TYPE: ClassVar[type[TypeIdItem]] = TypeIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class FilledNewArray(Format35c[TypeIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.FILLED_NEW_ARRAY
+    ITEM_TYPE: ClassVar[type[TypeIdItem]] = TypeIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class FilledNewArrayRange(Format3rc[TypeIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.FILLED_NEW_ARRAY_RANGE
+    ITEM_TYPE: ClassVar[type[TypeIdItem]] = TypeIdItem
 
 
 @dataclass(slots=True, frozen=True)
@@ -663,191 +692,229 @@ class AputShort(Format23x):
 @dataclass(slots=True, frozen=True)
 class Iget(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IGET
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IgetWide(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IGET_WIDE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IgetObject(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IGET_OBJECT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IgetBoolean(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IGET_BOOLEAN
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IgetByte(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IGET_BYTE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IgetChar(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IGET_CHAR
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IgetShort(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IGET_SHORT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class Iput(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IPUT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IputWide(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IPUT_WIDE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IputObject(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IPUT_OBJECT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IputBoolean(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IPUT_BOOLEAN
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IputByte(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IPUT_BYTE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IputChar(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IPUT_CHAR
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class IputShort(Format22c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.IPUT_SHORT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class Sget(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SGET
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SgetWide(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SGET_WIDE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SgetObject(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SGET_OBJECT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SgetBoolean(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SGET_BOOLEAN
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SgetByte(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SGET_BYTE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SgetChar(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SGET_CHAR
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SgetShort(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SGET_SHORT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class Sput(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SPUT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SputWide(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SPUT_WIDE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SputObject(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SPUT_OBJECT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SputBoolean(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SPUT_BOOLEAN
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SputByte(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SPUT_BYTE
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SputChar(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SPUT_CHAR
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class SputShort(Format21c[FieldIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.SPUT_SHORT
+    ITEM_TYPE: ClassVar[type[FieldIdItem]] = FieldIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeVirtual(Format35c[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_VIRTUAL
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeSuper(Format35c[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_SUPER
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeDirect(Format35c[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_DIRECT
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeStatic(Format35c[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_STATIC
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeInterface(Format35c[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_INTERFACE
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeVirtualRange(Format3rc[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_VIRTUAL_RANGE
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeSuperRange(Format3rc[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_SUPER_RANGE
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeDirectRange(Format3rc[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_DIRECT_RANGE
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeStaticRange(Format3rc[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_STATIC_RANGE
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeInterfaceRange(Format3rc[MethodIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_INTERFACE_RANGE
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
@@ -1373,31 +1440,37 @@ class UshrIntLit8(Format22b):
 @dataclass(slots=True, frozen=True)
 class InvokePolymorphic(Format45cc):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_POLYMORPHIC
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokePolymorphicRange(Format4rcc):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_POLYMORPHIC_RANGE
+    ITEM_TYPE: ClassVar[type[MethodIdItem]] = MethodIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeCustom(Format35c[CallSiteIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_CUSTOM
+    ITEM_TYPE: ClassVar[type[CallSiteIdItem]] = CallSiteIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class InvokeCustomRange(Format3rc[CallSiteIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.INVOKE_CUSTOM_RANGE
+    ITEM_TYPE: ClassVar[type[CallSiteIdItem]] = CallSiteIdItem
 
 
 @dataclass(slots=True, frozen=True)
 class ConstMethodHandle(Format21c[MethodHandleItem]):
     OPCODE: ClassVar[Opcode] = Opcode.CONST_METHOD_HANDLE
+    ITEM_TYPE: ClassVar[type[MethodHandleItem]] = MethodHandleItem
 
 
 @dataclass(slots=True, frozen=True)
 class ConstMethodType(Format21c[ProtoIdItem]):
     OPCODE: ClassVar[Opcode] = Opcode.CONST_METHOD_TYPE
+    ITEM_TYPE: ClassVar[type[ProtoIdItem]] = ProtoIdItem
 
 
 _ALL_INSTRUCTION_CLASSES: tuple[type[Instruction], ...] = (
@@ -1637,3 +1710,69 @@ def parse_instruction(cursor: Cursor) -> Instruction:
     if cls is None:
         raise ValueError(f"Unknown or unsupported opcode: 0x{opcode_byte:02x}")
     return cls.from_cursor(cursor)
+
+
+@overload
+def has_id(inst: Instruction) -> TypeIs[HasId[RefItem]]: ...
+@overload
+def has_id[T: RefItem](inst: Instruction, item_type: type[T]) -> TypeIs[HasId[T]]: ...
+
+
+def has_id(inst: Instruction, item_type: type[RefItem] | None = None) -> bool:
+    if not isinstance(inst, HasId):
+        return False
+    if item_type is None:
+        return True
+    return getattr(inst, "ITEM_TYPE", None) is item_type
+
+
+@overload
+def get_id(inst: Instruction) -> Idx[RefItem] | None: ...
+@overload
+def get_id[T: RefItem](inst: Instruction, item_type: type[T]) -> Idx[T] | None: ...
+
+
+def get_id(inst: Instruction, item_type: type[RefItem] | None = None) -> Idx[RefItem] | None:
+    if item_type is None:
+        if isinstance(inst, HasId):
+            return inst.item_id
+    else:
+        if has_id(inst, item_type):
+            return inst.item_id
+    return None
+
+
+def is_branch(inst: Instruction) -> TypeIs[HasTarget]:
+    return isinstance(inst, HasTarget)
+
+
+def is_conditional_branch(inst: Instruction) -> TypeIs[ConditionalBranch]:
+    return isinstance(inst, (Format21t, Format22t))
+
+
+def is_unconditional_branch(inst: Instruction) -> TypeIs[UnconditionalBranch]:
+    return isinstance(inst, (Format10t, Format20t, Format30t))
+
+
+def has_literal(inst: Instruction) -> TypeIs[HasLiteral]:
+    return isinstance(inst, HasLiteral)
+
+
+def get_literal(inst: Instruction) -> int | None:
+    if isinstance(inst, HasLiteral):
+        return int(inst.literal)
+    return None
+
+
+def is_return(
+    inst: Instruction,
+) -> TypeIs[ReturnVoid | Return | ReturnWide | ReturnObject]:
+    return isinstance(inst, (ReturnVoid, Return, ReturnWide, ReturnObject))
+
+
+def is_throw(inst: Instruction) -> TypeIs[Throw]:
+    return isinstance(inst, Throw)
+
+
+def is_switch(inst: Instruction) -> TypeIs[PackedSwitch | SparseSwitch]:
+    return isinstance(inst, (PackedSwitch, SparseSwitch))

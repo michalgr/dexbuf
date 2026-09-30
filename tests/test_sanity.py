@@ -135,6 +135,7 @@ class TestSanity(unittest.TestCase):
             "format_method_flags",
             "get_id",
             "get_literal",
+            "get_registers",
             "has_id",
             "has_literal",
             "is_branch",

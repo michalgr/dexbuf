@@ -526,6 +526,10 @@ class Format31t(Instruction):
     a: Reg
     b: BranchOffset
 
+    @property
+    def target(self) -> BranchOffset:
+        return self.b
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, b = cursor.unpack(cls.STRUCT)

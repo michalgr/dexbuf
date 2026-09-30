@@ -23,6 +23,7 @@ from dexbuf import (
     DexAdapter,
     DexFile,
     EncodedValue,
+    Opcode,
     ResolvedClass,
     UnresolvedClass,
     ValueType,
@@ -1643,7 +1644,12 @@ class TestMethodDomainModel(unittest.TestCase):
         m_concrete = cls.get_method("concreteMethod")
         assert m_concrete is not None
         self.assertTrue(m_concrete.has_code)
-        self.assertIsInstance(m_concrete.code, CodeItem)
+        self.assertIsNotNone(m_concrete.code)
+        assert m_concrete.code is not None
+        from dexbuf.model import Code
+
+        self.assertIsInstance(m_concrete.code, Code)
+        self.assertIsInstance(m_concrete.code.raw, CodeItem)
 
         m_native = cls.get_method("nativeMethod")
         assert m_native is not None
@@ -2053,6 +2059,127 @@ class TestAnnotationDomainModel(unittest.TestCase):
         self.assertEqual(ann1, ann2)  # Identical annotations across loaders compare equal
         self.assertEqual(hash(ann1), hash(ann2))
         self.assertNotEqual(ann1, "not_an_annotation")
+
+
+class TestCodeAndCFGDomainModel(unittest.TestCase):
+    def test_code_instruction_properties_and_resolutions(self) -> None:
+        # const-string v0, "Hello" (op=0x1a, v0, str@0)
+        # const/4 v1, #1 (op=0x12, v1, #1)
+        # if-eqz v1, +4 (op=0x38, v1, +4 code units -> pc 0x0002 + 4 = 0x0006)
+        # return-void (op=0x0e)
+        code_bytes = (
+            b"\x1a\x00\x00\x00"  # 0000: const-string v0, string@0
+            b"\x12\x10"  # 0002: const/4 v1, #1
+            b"\x38\x01\x04\x00"  # 0003: if-eqz v1, +4 -> target_pc 0x0007
+            b"\x0e\x00"  # 0005: return-void
+            b"\x0e\x00"  # 0006: return-void
+            b"\x0e\x00"  # 0007: return-void
+        )
+
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/CFGTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "direct_methods": [
+                        {
+                            "name": "testMethod",
+                            "return_type": "V",
+                            "params": ["I"],
+                            "access_flags": int(AccessFlags.PUBLIC | AccessFlags.STATIC),
+                            "registers_size": 2,
+                            "ins_size": 1,
+                            "outs_size": 0,
+                            "code": code_bytes,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.CFGTest"]
+        m = cls.get_method("testMethod")
+        assert m is not None
+
+        code = m.code
+        self.assertIsNotNone(code)
+        assert code is not None
+
+        self.assertEqual(code.registers_size, 2)
+        self.assertEqual(code.ins_size, 1)
+        self.assertEqual(code.locals_size, 1)
+        self.assertEqual(code.register_name(0), "v0")
+        self.assertEqual(code.register_name(1), "p0")
+
+        # Instruction queries
+        self.assertIn(0, code)
+        self.assertIn(2, code)
+        self.assertNotIn(1, code)  # 1 is middle of 2-unit instruction
+        self.assertNotIn("invalid", code)
+
+        inst0 = code.at(0)
+        self.assertEqual(inst0.pc, 0)
+        self.assertEqual(inst0.next_pc, 2)
+        self.assertEqual(inst0.code_units, 2)
+        self.assertEqual(inst0.opcode, Opcode.CONST_STRING)
+        self.assertEqual(inst0.mnemonic, "const-string")
+        self.assertEqual(inst0.register_names, ("v0",))
+        self.assertEqual(inst0.string_value, "I")  # String ID 0 in build_dex_bytes
+
+        inst1 = code.at(2)
+        self.assertEqual(inst1.literal, 1)
+
+        inst2 = code.at(3)
+        self.assertTrue(inst2.is_branch)
+        self.assertTrue(inst2.is_conditional_branch)
+        self.assertFalse(inst2.is_unconditional_branch)
+        self.assertEqual(inst2.branch_offset, 4)
+        self.assertEqual(inst2.target_pc, 7)
+
+        # Basic Block CFG verification
+        blocks = code.blocks
+        self.assertGreaterEqual(len(blocks), 2)
+        entry = code.entry_block
+        self.assertTrue(entry.is_entry)
+        self.assertEqual(entry.start_pc, 0)
+
+        # Disassembly string
+        dis = code.disassemble()
+        self.assertIn(".method", dis)
+        self.assertIn("const-string", dis)
+
+    def test_basic_block_and_code_no_getitem(self) -> None:
+        code_bytes = b"\x0e\x00"  # 0000: return-void
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/NoGetItem;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "direct_methods": [
+                        {
+                            "name": "run",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": 1,
+                            "code": code_bytes,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        m = loader["com.example.NoGetItem"].get_method("run")
+        assert m is not None and m.code is not None
+        code = m.code
+        block = code.entry_block
+
+        # Confirm __getitem__ is NOT implemented on Code or BasicBlock
+        with self.assertRaises(TypeError):
+            _ = code[0]  # type: ignore[typeddict-item]
+        with self.assertRaises(TypeError):
+            _ = block[0]  # type: ignore[typeddict-item]
 
 
 if __name__ == "__main__":

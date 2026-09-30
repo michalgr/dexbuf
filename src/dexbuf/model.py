@@ -19,6 +19,29 @@ from dexbuf.descriptors import (
 )
 from dexbuf.dex import DexFile
 from dexbuf.flags import AccessFlags
+from dexbuf.instructions import (
+    IOP,
+    Opcode,
+    PackedSwitchPayload,
+    SparseSwitchPayload,
+    get_id,
+    get_literal,
+    has_id,
+    is_branch,
+    is_conditional_branch,
+    is_return,
+    is_switch,
+    is_throw,
+    is_unconditional_branch,
+)
+from dexbuf.instructions.formats import (
+    Format3rc,
+    Format4rcc,
+    Format35c,
+    Format45cc,
+    HasTarget,
+    Instruction,
+)
 from dexbuf.items import (
     AnnotationItem,
     AnnotationSetItem,
@@ -27,12 +50,16 @@ from dexbuf.items import (
     CodeItem,
     EncodedField,
     EncodedMethod,
+    EncodedTypeAddrPair,
     FieldIdItem,
     MethodIdItem,
     ProtoIdItem,
+    StringIdItem,
+    TryItem,
+    TypeIdItem,
 )
 from dexbuf.mmap import open_mmap
-from dexbuf.types import NO_INDEX, NO_OFFSET, Offset
+from dexbuf.types import NO_INDEX, NO_OFFSET, Offset, Reg
 from dexbuf.value import EncodedValue
 from dexbuf.vdex import VdexFile
 from dexbuf.zip import ZipArchive
@@ -41,14 +68,19 @@ type ClassLoaderElementInput = ClassLoaderElement | DexFile | VdexFile | ZipArch
 
 __all__ = [
     "Annotation",
+    "BasicBlock",
+    "CatchHandler",
     "Class",
     "ClassLoader",
     "ClassLoaderElement",
     "ClassLoaderElementInput",
+    "Code",
+    "CodeInstruction",
     "DexAdapter",
     "Field",
     "Method",
     "ResolvedClass",
+    "TryCatch",
     "UnresolvedClass",
     "VdexAdapter",
     "ZipAdapter",
@@ -150,6 +182,7 @@ class Method:
     __slots__ = (
         "_annotations",
         "_cls",
+        "_code",
         "_encoded",
         "_is_direct",
         "_method_id",
@@ -170,6 +203,7 @@ class Method:
         self._method_idx: int = method_idx
         self._method_id: MethodIdItem = method_id
         self._is_direct: bool = is_direct
+        self._code: Code | None = None
         self._annotations: tuple[Annotation, ...] | None = None
         self._parameter_annotations: tuple[tuple[Annotation, ...], ...] | None = None
 
@@ -267,9 +301,13 @@ class Method:
         return self._encoded.code_off != NO_OFFSET
 
     @property
-    def code(self) -> CodeItem | None:
+    def code(self) -> Code | None:
+        if self._code is not None:
+            return self._code
         if self.has_code:
-            return self._cls.dex_file.get_code_item(self._encoded.code_off)
+            code_item = self._cls.dex_file.get_code_item(self._encoded.code_off)
+            self._code = Code(self, code_item)
+            return self._code
         return None
 
     @property
@@ -1180,3 +1218,706 @@ def open(path: str | os.PathLike[str], *, mmap: bool = True) -> ClassLoader:
     loader = load(buf)
     loader._resources.append(buf)
     return loader
+
+
+class CodeInstruction:
+    """High-level Dalvik bytecode instruction model wrapping an IOP with PC context."""
+
+    __slots__ = ("_iop", "_method", "_next_pc", "_pc")
+
+    def __init__(self, method: Method, pc: int, iop: IOP, next_pc: int) -> None:
+        self._method: Method = method
+        self._pc: int = pc
+        self._iop: IOP = iop
+        self._next_pc: int = next_pc
+
+    @property
+    def pc(self) -> int:
+        return self._pc
+
+    @property
+    def next_pc(self) -> int:
+        return self._next_pc
+
+    @property
+    def code_units(self) -> int:
+        return self._iop.code_units
+
+    @property
+    def opcode(self) -> Opcode:
+        if isinstance(self._iop, Instruction):
+            return self._iop.OPCODE
+        return Opcode(self._iop.IDENT)
+
+    @property
+    def mnemonic(self) -> str:
+        return self.opcode.name.lower().replace("_", "-")
+
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        iop = self._iop
+        if not isinstance(iop, Instruction):
+            return ()
+        if isinstance(iop, (Format35c, Format45cc)):
+            count = int(iop.a)
+            regs = (iop.c, iop.d, iop.e, iop.f, iop.g)
+            return regs[:count]
+        if isinstance(iop, (Format3rc, Format4rcc)):
+            count = int(iop.a)
+            start = int(iop.c)
+            return tuple(Reg(start + i) for i in range(count))
+
+        from dexbuf.instructions.formats import (
+            Format11n,
+            Format11x,
+            Format12x,
+            Format21c,
+            Format21h,
+            Format21s,
+            Format21t,
+            Format22b,
+            Format22c,
+            Format22s,
+            Format22t,
+            Format22x,
+            Format23x,
+            Format31c,
+            Format31i,
+            Format31t,
+            Format32x,
+            Format51l,
+        )
+
+        if isinstance(iop, Format23x):
+            return (iop.a, iop.b, iop.c)
+        if isinstance(
+            iop,
+            (
+                Format12x,
+                Format22x,
+                Format22b,
+                Format22t,
+                Format22s,
+                Format22c,
+                Format32x,
+            ),
+        ):
+            return (iop.a, iop.b)
+        if isinstance(
+            iop,
+            (
+                Format11x,
+                Format11n,
+                Format21t,
+                Format21s,
+                Format21h,
+                Format21c,
+                Format31i,
+                Format31t,
+                Format31c,
+                Format51l,
+            ),
+        ):
+            return (iop.a,)
+        return ()
+
+    @property
+    def register_names(self) -> tuple[str, ...]:
+        code = self._method.code
+        if code is None:
+            return ()
+        return tuple(code.register_name(r) for r in self.registers)
+
+    @property
+    def is_branch(self) -> bool:
+        return is_branch(self._iop) if isinstance(self._iop, Instruction) else False
+
+    @property
+    def is_conditional_branch(self) -> bool:
+        return is_conditional_branch(self._iop) if isinstance(self._iop, Instruction) else False
+
+    @property
+    def is_unconditional_branch(self) -> bool:
+        return is_unconditional_branch(self._iop) if isinstance(self._iop, Instruction) else False
+
+    @property
+    def is_switch(self) -> bool:
+        return is_switch(self._iop) if isinstance(self._iop, Instruction) else False
+
+    @property
+    def is_return(self) -> bool:
+        return is_return(self._iop) if isinstance(self._iop, Instruction) else False
+
+    @property
+    def is_throw(self) -> bool:
+        return is_throw(self._iop) if isinstance(self._iop, Instruction) else False
+
+    @property
+    def branch_offset(self) -> int | None:
+        if isinstance(self._iop, HasTarget):
+            return int(self._iop.target)
+        return None
+
+    @property
+    def target_pc(self) -> int | None:
+        offset = self.branch_offset
+        if offset is not None:
+            return self._pc + offset
+        return None
+
+    @property
+    def string_value(self) -> str | None:
+        if isinstance(self._iop, Instruction) and has_id(self._iop, StringIdItem):
+            id_val = get_id(self._iop, StringIdItem)
+            if id_val is not None:
+                return self._method.defining_class.dex_file.get_string(id_val)
+        return None
+
+    @property
+    def type_descriptor(self) -> Descriptor | None:
+        if isinstance(self._iop, Instruction) and has_id(self._iop, TypeIdItem):
+            id_val = get_id(self._iop, TypeIdItem)
+            if id_val is not None:
+                return self._method.defining_class.dex_file.get_type_descriptor(id_val)
+        return None
+
+    @property
+    def type_class(self) -> Class | None:
+        desc = self.type_descriptor
+        if desc is not None:
+            cls = self._method.defining_class.loader.load_class(desc)
+            return cls if cls is not None else UnresolvedClass(desc)
+        return None
+
+    @property
+    def field_id(self) -> FieldIdItem | None:
+        if isinstance(self._iop, Instruction) and has_id(self._iop, FieldIdItem):
+            id_val = get_id(self._iop, FieldIdItem)
+            if id_val is not None:
+                return self._method.defining_class.dex_file.get_field_id(id_val)
+        return None
+
+    @property
+    def target_field_name(self) -> str | None:
+        fid = self.field_id
+        if fid is not None:
+            return self._method.defining_class.dex_file.get_string(fid.name_idx)
+        return None
+
+    @property
+    def target_field_type_descriptor(self) -> Descriptor | None:
+        fid = self.field_id
+        if fid is not None:
+            return self._method.defining_class.dex_file.get_type_descriptor(fid.type_idx)
+        return None
+
+    @property
+    def method_id(self) -> MethodIdItem | None:
+        if isinstance(self._iop, Instruction) and has_id(self._iop, MethodIdItem):
+            id_val = get_id(self._iop, MethodIdItem)
+            if id_val is not None:
+                return self._method.defining_class.dex_file.get_method_id(id_val)
+        return None
+
+    @property
+    def target_method_name(self) -> str | None:
+        mid = self.method_id
+        if mid is not None:
+            return self._method.defining_class.dex_file.get_string(mid.name_idx)
+        return None
+
+    @property
+    def target_method_descriptor(self) -> str | None:
+        mid = self.method_id
+        if mid is not None:
+            dex = self._method.defining_class.dex_file
+            proto = dex.get_proto_id(mid.proto_idx)
+            ret_desc = dex.get_type_descriptor(proto.return_type_idx)
+            param_descs: list[Descriptor] = []
+            if proto.parameters_off != NO_OFFSET:
+                tlist = dex.get_type_list(proto.parameters_off)
+                param_descs = [dex.get_type_descriptor(item.type_idx) for item in tlist.list]
+            return format_method_descriptor(param_descs, ret_desc)
+        return None
+
+    @property
+    def literal(self) -> int | None:
+        return get_literal(self._iop) if isinstance(self._iop, Instruction) else None
+
+    @property
+    def raw(self) -> IOP:
+        return self._iop
+
+    @property
+    def raw_instruction(self) -> Instruction | None:
+        return self._iop if isinstance(self._iop, Instruction) else None
+
+    def __repr__(self) -> str:
+        return f"<CodeInstruction 0x{self._pc:04x}: {self.mnemonic}>"
+
+
+class CatchHandler:
+    """Represents an exception catch handler target in a method."""
+
+    __slots__ = ("_cls", "_is_catch_all", "_pair", "_target_pc")
+
+    def __init__(
+        self,
+        cls: ResolvedClass,
+        target_pc: int,
+        pair: EncodedTypeAddrPair | None = None,
+    ) -> None:
+        self._cls: ResolvedClass = cls
+        self._target_pc: int = target_pc
+        self._pair: EncodedTypeAddrPair | None = pair
+
+    @property
+    def target_pc(self) -> int:
+        return self._target_pc
+
+    @property
+    def is_catch_all(self) -> bool:
+        return self._pair is None
+
+    @property
+    def type_descriptor(self) -> Descriptor | None:
+        if self._pair is not None:
+            return self._cls.dex_file.get_type_descriptor(self._pair.type_idx)
+        return None
+
+    @property
+    def type_name(self) -> str | None:
+        desc = self.type_descriptor
+        if desc is not None:
+            return descriptor_to_type_name(desc)
+        return None
+
+    @property
+    def type_class(self) -> Class | None:
+        desc = self.type_descriptor
+        if desc is not None:
+            cls = self._cls.loader.load_class(desc)
+            return cls if cls is not None else UnresolvedClass(desc)
+        return None
+
+    @property
+    def raw(self) -> EncodedTypeAddrPair | None:
+        return self._pair
+
+    def __repr__(self) -> str:
+        target = f"0x{self._target_pc:04x}"
+        tname = self.type_name if self.type_name is not None else "catch-all"
+        return f"<CatchHandler target={target} type={tname!r}>"
+
+
+class TryCatch:
+    """Represents a try block and its associated catch handlers in a method."""
+
+    __slots__ = ("_handlers", "_try_item")
+
+    def __init__(self, try_item: TryItem, handlers: tuple[CatchHandler, ...]) -> None:
+        self._try_item: TryItem = try_item
+        self._handlers: tuple[CatchHandler, ...] = handlers
+
+    @property
+    def start_pc(self) -> int:
+        return self._try_item.start_addr
+
+    @property
+    def end_pc(self) -> int:
+        return self._try_item.end_addr
+
+    @property
+    def handlers(self) -> tuple[CatchHandler, ...]:
+        return self._handlers
+
+    @property
+    def raw(self) -> TryItem:
+        return self._try_item
+
+    def covers(self, pc: int) -> bool:
+        return self._try_item.covers(pc)
+
+    def __repr__(self) -> str:
+        spc = f"0x{self.start_pc:04x}"
+        epc = f"0x{self.end_pc:04x}"
+        return f"<TryCatch {spc}..{epc} handlers={len(self._handlers)}>"
+
+
+class BasicBlock:
+    """Represents a basic block in the control flow graph (CFG)."""
+
+    __slots__ = (
+        "_end_pc",
+        "_exception_handlers",
+        "_id",
+        "_instructions",
+        "_predecessors",
+        "_start_pc",
+        "_successors",
+        "_terminator",
+    )
+
+    def __init__(
+        self,
+        id: int,
+        start_pc: int,
+        end_pc: int,
+        instructions: tuple[CodeInstruction, ...],
+        terminator: CodeInstruction,
+        exception_handlers: tuple[CatchHandler, ...] = (),
+    ) -> None:
+        self._id: int = id
+        self._start_pc: int = start_pc
+        self._end_pc: int = end_pc
+        self._instructions: tuple[CodeInstruction, ...] = instructions
+        self._terminator: CodeInstruction = terminator
+        self._exception_handlers: tuple[CatchHandler, ...] = exception_handlers
+        self._predecessors: tuple[BasicBlock, ...] = ()
+        self._successors: tuple[BasicBlock, ...] = ()
+
+    @property
+    def id(self) -> int:
+        return self._id
+
+    @property
+    def start_pc(self) -> int:
+        return self._start_pc
+
+    @property
+    def end_pc(self) -> int:
+        return self._end_pc
+
+    @property
+    def instructions(self) -> tuple[CodeInstruction, ...]:
+        return self._instructions
+
+    @property
+    def terminator(self) -> CodeInstruction:
+        return self._terminator
+
+    @property
+    def predecessors(self) -> tuple[BasicBlock, ...]:
+        return self._predecessors
+
+    @property
+    def successors(self) -> tuple[BasicBlock, ...]:
+        return self._successors
+
+    @property
+    def exception_handlers(self) -> tuple[CatchHandler, ...]:
+        return self._exception_handlers
+
+    @property
+    def is_entry(self) -> bool:
+        return self._start_pc == 0
+
+    @property
+    def is_exit(self) -> bool:
+        return len(self._successors) == 0 or self._terminator.is_return or self._terminator.is_throw
+
+    def covers(self, pc: int) -> bool:
+        return self._start_pc <= pc < self._end_pc
+
+    def __contains__(self, pc: object) -> bool:
+        if isinstance(pc, int):
+            return self.covers(pc)
+        return False
+
+    def __iter__(self) -> Iterator[CodeInstruction]:
+        return iter(self._instructions)
+
+    def __len__(self) -> int:
+        return len(self._instructions)
+
+    def __repr__(self) -> str:
+        return f"<BasicBlock {self._id} [0x{self._start_pc:04x}..0x{self._end_pc:04x}]>"
+
+
+class Code:
+    """High-level domain model wrapping CodeItem with CFG basic blocks and instruction lookup."""
+
+    __slots__ = (
+        "_blocks",
+        "_instructions",
+        "_item",
+        "_method",
+        "_pc_map",
+        "_try_catches",
+    )
+
+    def __init__(self, method: Method, item: CodeItem) -> None:
+        self._method: Method = method
+        self._item: CodeItem = item
+
+        # Parse instructions and construct pc_map
+        insts: list[CodeInstruction] = []
+        pc_map: dict[int, CodeInstruction] = {}
+        cursor_pc = 0
+        for iop in item.insns:
+            next_pc = cursor_pc + iop.code_units
+            inst = CodeInstruction(method, cursor_pc, iop, next_pc)
+            insts.append(inst)
+            pc_map[cursor_pc] = inst
+            cursor_pc = next_pc
+
+        self._instructions: tuple[CodeInstruction, ...] = tuple(insts)
+        self._pc_map: dict[int, CodeInstruction] = pc_map
+
+        # Parse TryCatches
+        tc_list: list[TryCatch] = []
+        if item.tries_size > 0 and item.handlers is not None:
+            for try_item in item.tries:
+                encoded_handler = item.get_catch_handler(try_item)
+                handlers_list: list[CatchHandler] = []
+                for pair in encoded_handler.handlers:
+                    handlers_list.append(CatchHandler(method.defining_class, pair.addr, pair))
+                if encoded_handler.catches_all and encoded_handler.catch_all_addr is not None:
+                    handlers_list.append(
+                        CatchHandler(method.defining_class, encoded_handler.catch_all_addr, None)
+                    )
+                tc_list.append(TryCatch(try_item, tuple(handlers_list)))
+
+        self._try_catches: tuple[TryCatch, ...] = tuple(tc_list)
+
+        # Build CFG Basic Blocks
+        self._blocks: tuple[BasicBlock, ...] = self._build_basic_blocks(
+            self._instructions, self._pc_map, self._try_catches
+        )
+
+    @staticmethod
+    def _build_basic_blocks(
+        instructions: tuple[CodeInstruction, ...],
+        pc_map: dict[int, CodeInstruction],
+        try_catches: tuple[TryCatch, ...],
+    ) -> tuple[BasicBlock, ...]:
+        if not instructions:
+            return ()
+
+        leaders: set[int] = {0}
+        for inst in instructions:
+            if inst.is_branch:
+                if inst.target_pc is not None and inst.target_pc in pc_map:
+                    leaders.add(inst.target_pc)
+                if inst.next_pc in pc_map:
+                    leaders.add(inst.next_pc)
+            elif inst.is_switch:
+                if inst.next_pc in pc_map:
+                    leaders.add(inst.next_pc)
+                if inst.target_pc is not None and inst.target_pc in pc_map:
+                    payload_inst = pc_map[inst.target_pc]
+                    raw_payload = payload_inst.raw
+                    if isinstance(raw_payload, PackedSwitchPayload):
+                        for target_offset in raw_payload.targets:
+                            target_pc = inst.pc + int(target_offset)
+                            if target_pc in pc_map:
+                                leaders.add(target_pc)
+                    elif isinstance(raw_payload, SparseSwitchPayload):
+                        for target_offset in raw_payload.targets:
+                            target_pc = inst.pc + int(target_offset)
+                            if target_pc in pc_map:
+                                leaders.add(target_pc)
+            elif inst.is_return or inst.is_throw:
+                if inst.next_pc in pc_map:
+                    leaders.add(inst.next_pc)
+
+        for tc in try_catches:
+            if tc.start_pc in pc_map:
+                leaders.add(tc.start_pc)
+            if tc.end_pc in pc_map:
+                leaders.add(tc.end_pc)
+            for handler in tc.handlers:
+                if handler.target_pc in pc_map:
+                    leaders.add(handler.target_pc)
+
+        sorted_leaders = sorted(leaders)
+        blocks_list: list[BasicBlock] = []
+        block_by_start_pc: dict[int, BasicBlock] = {}
+
+        for idx, start_pc in enumerate(sorted_leaders):
+            end_pc = (
+                sorted_leaders[idx + 1]
+                if idx + 1 < len(sorted_leaders)
+                else instructions[-1].next_pc
+            )
+            block_insts = [inst for inst in instructions if start_pc <= inst.pc < end_pc]
+            if not block_insts:
+                continue
+            terminator = block_insts[-1]
+
+            block_handlers: list[CatchHandler] = []
+            for tc in try_catches:
+                if tc.covers(start_pc):
+                    block_handlers.extend(tc.handlers)
+
+            block = BasicBlock(
+                id=len(blocks_list),
+                start_pc=start_pc,
+                end_pc=end_pc,
+                instructions=tuple(block_insts),
+                terminator=terminator,
+                exception_handlers=tuple(block_handlers),
+            )
+            blocks_list.append(block)
+            block_by_start_pc[start_pc] = block
+
+        preds_map: dict[int, list[BasicBlock]] = {b.id: [] for b in blocks_list}
+        succs_map: dict[int, list[BasicBlock]] = {b.id: [] for b in blocks_list}
+
+        for block in blocks_list:
+            term = block.terminator
+            succ_pcs: list[int] = []
+
+            if term.is_conditional_branch:
+                if term.target_pc is not None:
+                    succ_pcs.append(term.target_pc)
+                if term.next_pc in pc_map:
+                    succ_pcs.append(term.next_pc)
+            elif term.is_unconditional_branch:
+                if term.target_pc is not None:
+                    succ_pcs.append(term.target_pc)
+            elif term.is_switch:
+                if term.next_pc in pc_map:
+                    succ_pcs.append(term.next_pc)
+                if term.target_pc is not None and term.target_pc in pc_map:
+                    payload_inst = pc_map[term.target_pc]
+                    raw_payload = payload_inst.raw
+                    if isinstance(raw_payload, PackedSwitchPayload):
+                        for target_offset in raw_payload.targets:
+                            succ_pcs.append(term.pc + int(target_offset))
+                    elif isinstance(raw_payload, SparseSwitchPayload):
+                        for target_offset in raw_payload.targets:
+                            succ_pcs.append(term.pc + int(target_offset))
+            elif term.is_return or term.is_throw:
+                pass
+            else:
+                if term.next_pc in pc_map:
+                    succ_pcs.append(term.next_pc)
+
+            for spc in succ_pcs:
+                if spc in block_by_start_pc:
+                    target_block = block_by_start_pc[spc]
+                    if target_block not in succs_map[block.id]:
+                        succs_map[block.id].append(target_block)
+                    if block not in preds_map[target_block.id]:
+                        preds_map[target_block.id].append(block)
+
+        for block in blocks_list:
+            block._predecessors = tuple(preds_map[block.id])
+            block._successors = tuple(succs_map[block.id])
+
+        return tuple(blocks_list)
+
+    @property
+    def method(self) -> Method:
+        return self._method
+
+    @property
+    def raw(self) -> CodeItem:
+        return self._item
+
+    @property
+    def registers_size(self) -> int:
+        return self._item.registers_size
+
+    @property
+    def ins_size(self) -> int:
+        return self._item.ins_size
+
+    @property
+    def outs_size(self) -> int:
+        return self._item.outs_size
+
+    @property
+    def locals_size(self) -> int:
+        return self._item.registers_size - self._item.ins_size
+
+    def register_name(self, reg: Reg | int) -> str:
+        reg_int = int(reg)
+        locals_sz = self.locals_size
+        if reg_int < locals_sz:
+            return f"v{reg_int}"
+        return f"p{reg_int - locals_sz}"
+
+    @property
+    def instructions(self) -> tuple[CodeInstruction, ...]:
+        return self._instructions
+
+    def at(self, pc: int) -> CodeInstruction:
+        inst = self._pc_map.get(pc)
+        if inst is None:
+            raise KeyError(f"No instruction at program counter {pc}")
+        return inst
+
+    def get(self, pc: int, default: CodeInstruction | None = None) -> CodeInstruction | None:
+        return self._pc_map.get(pc, default)
+
+    def __contains__(self, pc: object) -> bool:
+        if isinstance(pc, int):
+            return pc in self._pc_map
+        return False
+
+    def __iter__(self) -> Iterator[CodeInstruction]:
+        return iter(self._instructions)
+
+    def __len__(self) -> int:
+        return len(self._instructions)
+
+    @property
+    def blocks(self) -> tuple[BasicBlock, ...]:
+        return self._blocks
+
+    @property
+    def entry_block(self) -> BasicBlock:
+        return self._blocks[0]
+
+    def get_block_at(self, pc: int) -> BasicBlock | None:
+        for block in self._blocks:
+            if block.covers(pc):
+                return block
+        return None
+
+    @property
+    def try_catches(self) -> tuple[TryCatch, ...]:
+        return self._try_catches
+
+    def find_try_catch(self, pc: int) -> TryCatch | None:
+        for tc in self._try_catches:
+            if tc.covers(pc):
+                return tc
+        return None
+
+    def disassemble(self) -> str:
+        lines: list[str] = [
+            f".method {self._method.access_flags} {self._method.name}{self._method.descriptor}",
+            f"  .registers {self.registers_size}",
+        ]
+        for block in self._blocks:
+            lines.append(f"  [Block #{block.id}]")
+            for inst in block.instructions:
+                parts: list[str] = [f"    {inst.pc:04x}: {inst.mnemonic}"]
+                details: list[str] = []
+                if inst.register_names:
+                    details.append(", ".join(inst.register_names))
+                if inst.string_value is not None:
+                    details.append(f'"{inst.string_value}"')
+                elif inst.type_descriptor is not None:
+                    details.append(f"{inst.type_descriptor}")
+                elif inst.target_field_name is not None:
+                    details.append(f"{inst.target_field_name}")
+                elif inst.target_method_name is not None:
+                    details.append(f"{inst.target_method_name}")
+                elif inst.literal is not None:
+                    details.append(f"#{inst.literal}")
+
+                if inst.target_pc is not None:
+                    details.append(f"# {inst.target_pc:04x}")
+
+                if details:
+                    parts.append(" " + ", ".join(details))
+                lines.append("".join(parts))
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        mname = f"{self._method.defining_class.name}.{self._method.name}"
+        return f"<Code {mname!r} insns={len(self._instructions)} blocks={len(self._blocks)}>"

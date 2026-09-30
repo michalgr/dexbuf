@@ -185,7 +185,8 @@ class TestK9MailIntegration(unittest.TestCase):
             # Code item presence on concrete method
             self.assertTrue(hostname_method.has_code)
             self.assertIsNotNone(hostname_method.code)
-            self.assertIsInstance(hostname_method.code, CodeItem)
+            self.assertIsInstance(hostname_method.code, dexbuf.Code)
+            self.assertIsInstance(hostname_method.code.raw, CodeItem)
 
             # Abstract interface method
             iface_cls = loader["j$.io.InputStreamRetargetInterface"]

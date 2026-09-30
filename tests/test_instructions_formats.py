@@ -28,7 +28,7 @@ from dexbuf.instructions.definitions import (
     Nop,
     Return,
 )
-from dexbuf.instructions.formats import Format4rcc, Format45cc
+from dexbuf.instructions.formats import Format4rcc, Format45cc, HasId, HasLiteral, HasTarget
 from dexbuf.items import FieldIdItem, StringIdItem
 from dexbuf.types import ArgumentCount, BranchOffset, Hat, Idx, Literal, Reg
 
@@ -296,6 +296,42 @@ class TestInstructionFormats(unittest.TestCase):
         self.assertEqual(parsed.c, 4)
         self.assertEqual(parsed.proto, 0x5678)
         self.assertEqual(parsed, inst)
+
+    def test_has_id_protocol(self) -> None:
+        inst_string = ConstString(a=Reg(1), b=Idx[StringIdItem](42))
+        self.assertIsInstance(inst_string, HasId)
+        self.assertEqual(inst_string.item_id, 42)
+
+        inst_iget = Iget(a=Reg(1), b=Reg(2), c=Idx[FieldIdItem](100))
+        self.assertIsInstance(inst_iget, HasId)
+        self.assertEqual(inst_iget.item_id, 100)
+
+        inst_nop = Nop()
+        self.assertNotIsInstance(inst_nop, HasId)
+
+    def test_has_target_protocol(self) -> None:
+        inst_goto = Goto(a=BranchOffset(-5))
+        self.assertIsInstance(inst_goto, HasTarget)
+        self.assertEqual(inst_goto.target, -5)
+
+        inst_ifeq = IfEq(a=Reg(1), b=Reg(2), c=BranchOffset(12))
+        self.assertIsInstance(inst_ifeq, HasTarget)
+        self.assertEqual(inst_ifeq.target, 12)
+
+        inst_nop = Nop()
+        self.assertNotIsInstance(inst_nop, HasTarget)
+
+    def test_has_literal_protocol(self) -> None:
+        inst_c4 = Const4(a=Reg(1), b=Literal(-3))
+        self.assertIsInstance(inst_c4, HasLiteral)
+        self.assertEqual(inst_c4.literal, -3)
+
+        inst_h16 = ConstHigh16(a=Reg(2), b=Hat(0x1234_0000))
+        self.assertIsInstance(inst_h16, HasLiteral)
+        self.assertEqual(inst_h16.literal, 0x1234_0000)
+
+        inst_nop = Nop()
+        self.assertNotIsInstance(inst_nop, HasLiteral)
 
 
 if __name__ == "__main__":

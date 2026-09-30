@@ -11,14 +11,35 @@ from dexbuf.instructions.definitions import (
     AddInt,
     Const,
     Const4,
+    ConstClass,
     ConstString,
+    Goto,
+    IfEq,
+    Instruction,
     InvokePolymorphic,
     InvokePolymorphicRange,
     Nop,
+    PackedSwitch,
+    Return,
+    ReturnObject,
     ReturnVoid,
+    ReturnWide,
+    SparseSwitch,
+    Throw,
+    get_id,
+    get_literal,
+    has_id,
+    has_literal,
+    is_branch,
+    is_conditional_branch,
+    is_return,
+    is_switch,
+    is_throw,
+    is_unconditional_branch,
     parse_instruction,
 )
-from dexbuf.types import ArgumentCount, Idx, Literal, Reg
+from dexbuf.items import StringIdItem, TypeIdItem
+from dexbuf.types import ArgumentCount, BranchOffset, Idx, Literal, Reg
 
 
 class TestInstructionDefinitions(unittest.TestCase):
@@ -94,6 +115,99 @@ class TestInstructionDefinitions(unittest.TestCase):
         iop = parse_iop(Cursor(raw_ret))
         self.assertIsInstance(iop, ReturnVoid)
         self.assertEqual(iop, ReturnVoid())
+
+    def test_has_id_and_get_id(self) -> None:
+        """Verify has_id and get_id with and without item_type filter."""
+        const_str = ConstString(a=Reg(1), b=Idx[StringIdItem](10))
+        const_cls = ConstClass(a=Reg(2), b=Idx[TypeIdItem](20))
+        nop = Nop()
+
+        # Without item_type filter
+        self.assertTrue(has_id(const_str))
+        self.assertEqual(get_id(const_str), 10)
+        self.assertTrue(has_id(const_cls))
+        self.assertEqual(get_id(const_cls), 20)
+        self.assertFalse(has_id(nop))
+        self.assertIsNone(get_id(nop))
+
+        # With item_type filter
+        self.assertTrue(has_id(const_str, StringIdItem))
+        self.assertEqual(get_id(const_str, StringIdItem), 10)
+        self.assertFalse(has_id(const_str, TypeIdItem))
+        self.assertIsNone(get_id(const_str, TypeIdItem))
+
+        self.assertTrue(has_id(const_cls, TypeIdItem))
+        self.assertEqual(get_id(const_cls, TypeIdItem), 20)
+        self.assertFalse(has_id(const_cls, StringIdItem))
+        self.assertIsNone(get_id(const_cls, StringIdItem))
+
+    def test_branch_type_guards_and_negative_narrowing(self) -> None:
+        """Verify is_branch, is_conditional_branch, is_unconditional_branch and chained if/elif."""
+        goto = Goto(a=BranchOffset(-10))
+        ifeq = IfEq(a=Reg(1), b=Reg(2), c=BranchOffset(15))
+        nop = Nop()
+
+        self.assertTrue(is_branch(goto))
+        self.assertTrue(is_branch(ifeq))
+        self.assertFalse(is_branch(nop))
+
+        self.assertFalse(is_conditional_branch(goto))
+        self.assertTrue(is_unconditional_branch(goto))
+
+        self.assertTrue(is_conditional_branch(ifeq))
+        self.assertFalse(is_unconditional_branch(ifeq))
+
+        # Verify chained if / elif pattern
+        def classify_branch(inst: Instruction) -> str:
+            if is_conditional_branch(inst):
+                return f"conditional:{inst.target}"
+            elif is_unconditional_branch(inst):
+                return f"unconditional:{inst.target}"
+            else:
+                return "not_branch"
+
+        self.assertEqual(classify_branch(ifeq), "conditional:15")
+        self.assertEqual(classify_branch(goto), "unconditional:-10")
+        self.assertEqual(classify_branch(nop), "not_branch")
+
+    def test_has_literal_and_get_literal(self) -> None:
+        """Verify has_literal and get_literal helpers."""
+        const4 = Const4(a=Reg(1), b=Literal(-5))
+        nop = Nop()
+
+        self.assertTrue(has_literal(const4))
+        self.assertEqual(get_literal(const4), -5)
+
+        self.assertFalse(has_literal(nop))
+        self.assertIsNone(get_literal(nop))
+
+    def test_control_flow_guards(self) -> None:
+        """Verify is_return, is_throw, is_switch type guards."""
+        ret_void = ReturnVoid()
+        ret = Return(a=Reg(1))
+        ret_wide = ReturnWide(a=Reg(2))
+        ret_obj = ReturnObject(a=Reg(3))
+
+        throw_insn = Throw(a=Reg(1))
+        packed_sw = PackedSwitch(a=Reg(1), b=BranchOffset(10))
+        sparse_sw = SparseSwitch(a=Reg(1), b=BranchOffset(20))
+        nop = Nop()
+
+        # is_return
+        self.assertTrue(is_return(ret_void))
+        self.assertTrue(is_return(ret))
+        self.assertTrue(is_return(ret_wide))
+        self.assertTrue(is_return(ret_obj))
+        self.assertFalse(is_return(nop))
+
+        # is_throw
+        self.assertTrue(is_throw(throw_insn))
+        self.assertFalse(is_throw(nop))
+
+        # is_switch
+        self.assertTrue(is_switch(packed_sw))
+        self.assertTrue(is_switch(sparse_sw))
+        self.assertFalse(is_switch(nop))
 
 
 if __name__ == "__main__":

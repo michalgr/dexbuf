@@ -2139,10 +2139,15 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
 
         # Basic Block CFG verification
         blocks = code.blocks
-        self.assertGreaterEqual(len(blocks), 2)
+        self.assertEqual(len(blocks), 4)
         entry = code.entry_block
         self.assertTrue(entry.is_entry)
         self.assertEqual(entry.start_pc, 0)
+        self.assertEqual(entry.end_pc, 5)
+        self.assertEqual(len(entry), 3)
+        self.assertEqual(entry.terminator.pc, 3)
+        self.assertEqual(entry.terminator.opcode, Opcode.IF_EQZ)
+        self.assertEqual(tuple(b.start_pc for b in entry.successors), (5, 7))
 
         # Disassembly string
         dis = code.disassemble()
@@ -2249,6 +2254,109 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         succ_pcs = {succ.start_pc for succ in entry_block.successors}
         self.assertIn(3, succ_pcs)
         self.assertIn(12, succ_pcs)
+
+    def test_straight_line_code_single_basic_block(self) -> None:
+        # const-string v0, "Hello" (2 code units)
+        # const/4 v1, #1 (1 code unit)
+        # add-int v0, v0, v1 (1 code unit)
+        # return-void (1 code unit)
+        code_bytes = (
+            b"\x1a\x00\x00\x00"  # 0000: const-string v0, string@0
+            b"\x12\x10"  # 0002: const/4 v1, #1
+            b"\x90\x00\x00\x01"  # 0003: add-int v0, v0, v1
+            b"\x0e\x00"  # 0005: return-void
+        )
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/StraightLineTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "direct_methods": [
+                        {
+                            "name": "run",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": 1,
+                            "code": code_bytes,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        m = loader["com.example.StraightLineTest"].get_method("run")
+        assert m is not None and m.code is not None
+        code = m.code
+
+        # Entire method must form exactly 1 basic block containing all 4 instructions
+        self.assertEqual(len(code.blocks), 1)
+        block = code.entry_block
+        self.assertTrue(block.is_entry)
+        self.assertTrue(block.is_exit)
+        self.assertEqual(block.start_pc, 0)
+        self.assertEqual(block.end_pc, 6)
+        self.assertEqual(len(block.instructions), 4)
+        self.assertEqual(block.terminator.opcode, Opcode.RETURN_VOID)
+        self.assertEqual(block.predecessors, ())
+        self.assertEqual(block.successors, ())
+
+    def test_unconditional_branch_and_catch_leaders(self) -> None:
+        from dexbuf.instructions import Goto, ReturnVoid
+        from dexbuf.types import BranchOffset
+
+        # PC 0: const/4 v0, #0
+        # PC 1: goto +3 -> PC 4
+        # PC 3: return-void (unreachable/dead or target of jump)
+        # PC 4: return-void
+        goto_insn = Goto(a=BranchOffset(3))  # 1 unit, target_pc = 1 + 3 = 4
+        ret_insn = ReturnVoid()  # 1 unit
+
+        code_stream = (
+            b"\x12\x00"  # 0000: const/4 v0, #0
+            + goto_insn.to_bytes()  # 0001: goto +3 -> 0004
+            + ret_insn.to_bytes()  # 0002: return-void
+            + ret_insn.to_bytes()  # 0003: return-void
+            + ret_insn.to_bytes()  # 0004: return-void
+        )
+
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/BranchTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "direct_methods": [
+                        {
+                            "name": "run",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": 1,
+                            "code": code_stream,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        m = loader["com.example.BranchTest"].get_method("run")
+        assert m is not None and m.code is not None
+        code = m.code
+
+        # Leaders should be:
+        # PC 0 (entry)
+        # PC 2 (follower of goto)
+        # PC 4 (target of goto)
+        # PC 3 is follower of return-void at PC 2
+        block0 = code.get_block_at(0)
+        assert block0 is not None
+        self.assertEqual(block0.start_pc, 0)
+        self.assertEqual(block0.end_pc, 2)
+        self.assertEqual(len(block0.instructions), 2)
+        self.assertEqual(block0.terminator.mnemonic, "goto")
+
+        succ_start_pcs = [b.start_pc for b in block0.successors]
+        self.assertEqual(succ_start_pcs, [4])
 
 
 if __name__ == "__main__":

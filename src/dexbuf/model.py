@@ -26,7 +26,6 @@ from dexbuf.instructions import (
     SparseSwitchPayload,
     get_id,
     get_literal,
-    get_registers,
     has_id,
     is_branch,
     is_conditional_branch,
@@ -1251,7 +1250,7 @@ class CodeInstruction:
 
     @property
     def registers(self) -> tuple[Reg, ...]:
-        return get_registers(self._insn)
+        return self._insn.registers
 
     @property
     def register_names(self) -> tuple[str, ...]:

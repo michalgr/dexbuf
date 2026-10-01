@@ -80,6 +80,11 @@ class Instruction(Protocol):
         """Size in 16-bit code units, derived directly from STRUCT."""
         return self.STRUCT.size // 2
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        """Registers used or defined by this instruction."""
+        ...
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         """Parse an instruction from a Cursor."""
@@ -120,6 +125,10 @@ class Format10x(Instruction):
 
     STRUCT: ClassVar[struct.Struct] = struct.Struct("<BB")
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return ()
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, _ = cursor.unpack(cls.STRUCT)
@@ -137,6 +146,10 @@ class Format12x(Instruction):
 
     a: Reg
     b: Reg
+
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -160,6 +173,10 @@ class Format11n(Instruction):
     def literal(self) -> Literal:
         return self.b
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, ba = cursor.unpack(cls.STRUCT)
@@ -179,6 +196,10 @@ class Format11x(Instruction):
     STRUCT: ClassVar[struct.Struct] = struct.Struct("<BB")
 
     a: Reg
+
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -201,6 +222,10 @@ class Format10t(Instruction):
     def target(self) -> BranchOffset:
         return self.a
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return ()
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a = cursor.unpack(cls.STRUCT)
@@ -222,6 +247,10 @@ class Format20t(Instruction):
     def target(self) -> BranchOffset:
         return self.a
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return ()
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, _, a = cursor.unpack(cls.STRUCT)
@@ -239,6 +268,10 @@ class Format22x(Instruction):
 
     a: Reg
     b: Reg
+
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -262,6 +295,10 @@ class Format21t(Instruction):
     def target(self) -> BranchOffset:
         return self.b
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, b = cursor.unpack(cls.STRUCT)
@@ -283,6 +320,10 @@ class Format21s(Instruction):
     @property
     def literal(self) -> Literal:
         return self.b
+
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -307,6 +348,10 @@ class Format21h(Instruction):
     def literal(self) -> Hat:
         return self.b
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, val = cursor.unpack(cls.STRUCT)
@@ -330,6 +375,10 @@ class Format21c[RefT: RefItem](Instruction):
     def item_id(self) -> Idx[RefT]:
         return self.b
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, b = cursor.unpack(cls.STRUCT)
@@ -348,6 +397,10 @@ class Format23x(Instruction):
     a: Reg
     b: Reg
     c: Reg
+
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b, self.c)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -372,6 +425,10 @@ class Format22b(Instruction):
     def literal(self) -> Literal:
         return self.c
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, b, c = cursor.unpack(cls.STRUCT)
@@ -394,6 +451,10 @@ class Format22t(Instruction):
     @property
     def target(self) -> BranchOffset:
         return self.c
+
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -420,6 +481,10 @@ class Format22s(Instruction):
     def literal(self) -> Literal:
         return self.c
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, ba, c = cursor.unpack(cls.STRUCT)
@@ -445,6 +510,10 @@ class Format22c[RefT: RefItem](Instruction):
     def item_id(self) -> Idx[RefT]:
         return self.c
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, ba, c = cursor.unpack(cls.STRUCT)
@@ -468,6 +537,10 @@ class Format30t(Instruction):
     def target(self) -> BranchOffset:
         return self.a
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return ()
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, _, a = cursor.unpack(cls.STRUCT)
@@ -485,6 +558,10 @@ class Format32x(Instruction):
 
     a: Reg
     b: Reg
+
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a, self.b)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -508,6 +585,10 @@ class Format31i(Instruction):
     def literal(self) -> Literal:
         return self.b
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, b = cursor.unpack(cls.STRUCT)
@@ -530,6 +611,10 @@ class Format31t(Instruction):
     def target(self) -> BranchOffset:
         return self.b
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, b = cursor.unpack(cls.STRUCT)
@@ -551,6 +636,10 @@ class Format31c[RefT: RefItem](Instruction):
     @property
     def item_id(self) -> Idx[RefT]:
         return self.b
+
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -578,6 +667,10 @@ class Format35c[RefT: RefItem](Instruction):
     @property
     def item_id(self) -> Idx[RefT]:
         return self.b
+
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.c, self.d, self.e, self.f, self.g)[: int(self.a)]
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -615,6 +708,10 @@ class Format3rc[RefT: RefItem](Instruction):
     def item_id(self) -> Idx[RefT]:
         return self.b
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return tuple(Reg(int(self.c) + i) for i in range(int(self.a)))
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, b, c = cursor.unpack(cls.STRUCT)
@@ -645,6 +742,10 @@ class Format45cc(Instruction):
     @property
     def item_id(self) -> Idx[MethodIdItem]:
         return self.b
+
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.c, self.d, self.e, self.f, self.g)[: int(self.a)]
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
@@ -684,6 +785,10 @@ class Format4rcc(Instruction):
     def item_id(self) -> Idx[MethodIdItem]:
         return self.b
 
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return tuple(Reg(int(self.c) + i) for i in range(int(self.a)))
+
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:
         _, a, b, c, proto = cursor.unpack(cls.STRUCT)
@@ -710,6 +815,10 @@ class Format51l(Instruction):
     @property
     def literal(self) -> Literal:
         return self.b
+
+    @property
+    def registers(self) -> tuple[Reg, ...]:
+        return (self.a,)
 
     @classmethod
     def from_cursor(cls, cursor: Cursor) -> Self:

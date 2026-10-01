@@ -333,6 +333,63 @@ class TestInstructionFormats(unittest.TestCase):
         inst_nop = Nop()
         self.assertNotIsInstance(inst_nop, HasLiteral)
 
+    def test_registers_property(self) -> None:
+        """Verify registers property across format categories."""
+        # Zero registers
+        self.assertEqual(Nop().registers, ())
+        self.assertEqual(Goto(a=BranchOffset(5)).registers, ())
+
+        # One register
+        self.assertEqual(Return(a=Reg(1)).registers, (Reg(1),))
+        self.assertEqual(Const4(a=Reg(2), b=Literal(3)).registers, (Reg(2),))
+
+        # Two registers
+        self.assertEqual(Move(a=Reg(3), b=Reg(4)).registers, (Reg(3), Reg(4)))
+        self.assertEqual(IfEq(a=Reg(5), b=Reg(6), c=BranchOffset(10)).registers, (Reg(5), Reg(6)))
+
+        # Three registers
+        self.assertEqual(AddInt(a=Reg(1), b=Reg(2), c=Reg(3)).registers, (Reg(1), Reg(2), Reg(3)))
+
+        # 5-Register Array (Format35c / Format45cc)
+        inv_35c = InvokeVirtual(
+            a=ArgumentCount(3),
+            b=Idx(0),
+            c=Reg(10),
+            d=Reg(11),
+            e=Reg(12),
+            f=Reg(13),
+            g=Reg(14),
+        )
+        self.assertEqual(inv_35c.registers, (Reg(10), Reg(11), Reg(12)))
+
+        inv_45cc = InvokePolymorphic(
+            a=ArgumentCount(2),
+            b=Idx(0),
+            c=Reg(1),
+            d=Reg(2),
+            e=Reg(3),
+            f=Reg(4),
+            g=Reg(5),
+            proto=Idx(0),
+        )
+        self.assertEqual(inv_45cc.registers, (Reg(1), Reg(2)))
+
+        # Register Range (Format3rc / Format4rcc)
+        inv_3rc = InvokeVirtualRange(
+            a=ArgumentCount(4),
+            b=Idx(0),
+            c=Reg(5),
+        )
+        self.assertEqual(inv_3rc.registers, (Reg(5), Reg(6), Reg(7), Reg(8)))
+
+        inv_4rcc = InvokePolymorphicRange(
+            a=ArgumentCount(3),
+            b=Idx(0),
+            c=Reg(10),
+            proto=Idx(0),
+        )
+        self.assertEqual(inv_4rcc.registers, (Reg(10), Reg(11), Reg(12)))
+
 
 if __name__ == "__main__":
     unittest.main()

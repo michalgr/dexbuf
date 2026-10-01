@@ -1660,10 +1660,13 @@ class Code:
 
         leaders: set[int] = {0}
         for inst in instructions:
-            for pc in inst.next_pcs:
-                if pc in pc_map:
-                    leaders.add(pc)
-            if inst.is_unconditional_branch or inst.is_return or inst.is_throw:
+            if inst.is_conditional_branch or inst.is_unconditional_branch or inst.is_switch:
+                for pc in inst.next_pcs:
+                    if pc in pc_map:
+                        leaders.add(pc)
+                if inst.is_unconditional_branch and inst.next_pc in pc_map:
+                    leaders.add(inst.next_pc)
+            elif inst.is_return or inst.is_throw:
                 if inst.next_pc in pc_map:
                     leaders.add(inst.next_pc)
 

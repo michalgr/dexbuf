@@ -165,6 +165,34 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(ret, 1)
         self.assertIn("not found in container", stderr_buf.getvalue())
 
+    def test_broken_pipe_error_handling(self) -> None:
+        def raise_broken_pipe(*args: str, **kwargs: object) -> None:
+            raise BrokenPipeError()
+
+        with (
+            patch("sys.stdout.write", side_effect=raise_broken_pipe),
+            patch("os.dup2") as mock_dup2,
+        ):
+            ret = main([self.temp_file.name])
+            self.assertEqual(ret, 0)
+            mock_dup2.assert_called_once()
+
+        with (
+            patch("sys.stdout.write", side_effect=raise_broken_pipe),
+            patch("os.dup2") as mock_dup2,
+        ):
+            ret_dis = main(["-d", "com.example.Foo", self.temp_file.name])
+            self.assertEqual(ret_dis, 0)
+            mock_dup2.assert_called_once()
+
+        # Test exception inside BrokenPipeError handler (e.g. dup2 fails)
+        with (
+            patch("sys.stdout.write", side_effect=raise_broken_pipe),
+            patch("os.dup2", side_effect=OSError("dup2 failed")),
+        ):
+            ret_err = main([self.temp_file.name])
+            self.assertEqual(ret_err, 0)
+
     def test_k9mail_apk_integration(self) -> None:
         try:
             apk_path = get_k9mail_apk_path()

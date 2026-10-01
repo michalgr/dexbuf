@@ -36,3 +36,22 @@ jobs:
 
       - name: Run pytest
         run: uv run pytest
+
+      - name: Run dexdump on K-9 Mail APK and present in CI summary
+        run: |
+          APK=$(uv run python -c "from tests.helpers import get_k9mail_apk_path; print(get_k9mail_apk_path())")
+
+          echo "## Dexdump Demonstration on K-9 Mail APK" >> $GITHUB_STEP_SUMMARY
+          echo "Analyzed container: \`$APK\`" >> $GITHUB_STEP_SUMMARY
+
+          echo "<details><summary><b>Class Listing Sample (first 30 classes)</b></summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          uv run dexdump "$APK" --list | head -n 30 >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Disassembly of \`com.fsck.k9.mail.Address\`" >> $GITHUB_STEP_SUMMARY
+          echo '```smali' >> $GITHUB_STEP_SUMMARY
+          uv run dexdump "$APK" -d "com.fsck.k9.mail.Address" | head -n 80 >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

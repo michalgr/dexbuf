@@ -1,6 +1,7 @@
 """Command-line interface for dexdump tool in dexbuf."""
 
 import argparse
+import os
 import sys
 from collections.abc import Sequence
 
@@ -77,20 +78,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.stderr.write(f"Error opening container {args.container!r}: {exc}\n")
         return 1
 
-    with loader:
-        if args.disassemble is not None:
-            cls = loader.load_class(args.disassemble)
-            if cls is None:
-                sys.stderr.write(
-                    f"Error: Class {args.disassemble!r} not found in "
-                    f"container {args.container!r}.\n"
-                )
-                return 1
-            sys.stdout.write(disassemble_class(cls) + "\n")
-            return 0
+    try:
+        with loader:
+            if args.disassemble is not None:
+                cls = loader.load_class(args.disassemble)
+                if cls is None:
+                    sys.stderr.write(
+                        f"Error: Class {args.disassemble!r} not found in "
+                        f"container {args.container!r}.\n"
+                    )
+                    return 1
+                sys.stdout.write(disassemble_class(cls) + "\n")
+                return 0
 
-        # Default action or --list: list defined classes
-        for cls in loader:
-            sys.stdout.write(f"{cls.name}\n")
+            # Default action or --list: list defined classes
+            for cls in loader:
+                sys.stdout.write(f"{cls.name}\n")
+    except BrokenPipeError:
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+            os.close(devnull)
+        except Exception:
+            pass
+        return 0
 
     return 0

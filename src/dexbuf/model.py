@@ -18,7 +18,12 @@ from dexbuf.descriptors import (
     to_descriptor,
 )
 from dexbuf.dex import DexFile
-from dexbuf.flags import AccessFlags, format_method_flags
+from dexbuf.flags import (
+    AccessFlags,
+    format_class_flags,
+    format_field_flags,
+    format_method_flags,
+)
 from dexbuf.instructions import (
     Opcode,
     PackedSwitchPayload,
@@ -917,6 +922,40 @@ class ResolvedClass(Class):
                         result.append(())
                 return tuple(result)
         return tuple(() for _ in range(param_count))
+
+    def disassemble(self) -> str:
+        """Format the full disassembly for this ResolvedClass."""
+        lines: list[str] = []
+
+        cflags = format_class_flags(self.access_flags)
+        if cflags:
+            lines.append(f".class {cflags} {self.descriptor}")
+        else:
+            lines.append(f".class {self.descriptor}")
+
+        if self.super_class is not None:
+            lines.append(f".super {self.super_class.descriptor}")
+
+        for iface in self.interfaces:
+            lines.append(f".implements {iface.descriptor}")
+
+        for field in self.fields:
+            fflags = format_field_flags(field.access_flags)
+            fhead = f".field {fflags} " if fflags else ".field "
+            fval = ""
+            if field.initial_value is not None:
+                fval = f" = {field.initial_value.value}"
+            lines.append(f"{fhead}{field.name}:{field.type_descriptor}{fval}")
+
+        for method in self.methods:
+            if method.has_code and method.code is not None:
+                lines.append(method.code.disassemble())
+            else:
+                mflags = format_method_flags(method.access_flags)
+                mhead = f".method {mflags} " if mflags else ".method "
+                lines.append(f"{mhead}{method.name}{method.descriptor}")
+
+        return "\n".join(lines)
 
     def __repr__(self) -> str:
         return f"<Class {self.name!r}>"

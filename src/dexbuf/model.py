@@ -18,7 +18,7 @@ from dexbuf.descriptors import (
     to_descriptor,
 )
 from dexbuf.dex import DexFile
-from dexbuf.flags import AccessFlags
+from dexbuf.flags import AccessFlags, format_method_flags
 from dexbuf.instructions import (
     Opcode,
     PackedSwitchPayload,
@@ -1812,8 +1812,10 @@ class Code:
         return None
 
     def disassemble(self) -> str:
+        mflags = format_method_flags(self._method.access_flags)
+        mhead = f".method {mflags} " if mflags else ".method "
         lines: list[str] = [
-            f".method {self._method.access_flags} {self._method.name}{self._method.descriptor}",
+            f"{mhead}{self._method.name}{self._method.descriptor}",
             f"  .registers {self.registers_size}",
         ]
         for block in self._blocks:

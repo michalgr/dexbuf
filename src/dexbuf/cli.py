@@ -6,7 +6,6 @@ import sys
 from collections.abc import Sequence
 
 import dexbuf
-from dexbuf.flags import format_class_flags, format_field_flags, format_method_flags
 from dexbuf.model import ResolvedClass
 
 __all__ = ["disassemble_class", "main"]
@@ -14,37 +13,7 @@ __all__ = ["disassemble_class", "main"]
 
 def disassemble_class(cls: ResolvedClass) -> str:
     """Format the full disassembly for a ResolvedClass."""
-    lines: list[str] = []
-
-    cflags = format_class_flags(cls.access_flags)
-    if cflags:
-        lines.append(f".class {cflags} {cls.descriptor}")
-    else:
-        lines.append(f".class {cls.descriptor}")
-
-    if cls.super_class is not None:
-        lines.append(f".super {cls.super_class.descriptor}")
-
-    for iface in cls.interfaces:
-        lines.append(f".implements {iface.descriptor}")
-
-    for field in cls.fields:
-        fflags = format_field_flags(field.access_flags)
-        fhead = f".field {fflags} " if fflags else ".field "
-        fval = ""
-        if field.initial_value is not None:
-            fval = f" = {field.initial_value.value}"
-        lines.append(f"{fhead}{field.name}:{field.type_descriptor}{fval}")
-
-    for method in cls.methods:
-        if method.has_code and method.code is not None:
-            lines.append(method.code.disassemble())
-        else:
-            mflags = format_method_flags(method.access_flags)
-            mhead = f".method {mflags} " if mflags else ".method "
-            lines.append(f"{mhead}{method.name}{method.descriptor}")
-
-    return "\n".join(lines)
+    return cls.disassemble()
 
 
 def main(argv: Sequence[str] | None = None) -> int:

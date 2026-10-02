@@ -270,20 +270,20 @@ class TestK9MailIntegration(unittest.TestCase):
         # Closing multiple times should be safe
         loader2.close()
 
-    def test_disassemble_address_class_full_dump(self) -> None:
-        """Verify full disassembly dump of com.fsck.k9.mail.Address matches golden snapshot."""
+    def test_disassemble_account_remover_class_full_dump(self) -> None:
+        """Verify full disassembly dump of AccountRemover matches golden snapshot."""
         from pathlib import Path
 
-        fixture_path = Path(__file__).parent / "fixtures" / "k9_address_disassembly.smali"
+        fixture_path = Path(__file__).parent / "fixtures" / "k9_account_remover_disassembly.smali"
         self.assertTrue(fixture_path.exists(), f"Fixture file not found: {fixture_path}")
         expected_dump = fixture_path.read_text(encoding="utf-8").strip()
 
         with dexbuf.open(self.apk_path) as loader:
-            addr_cls = loader["com.fsck.k9.mail.Address"]
-            dump = addr_cls.disassemble()
+            remover_cls = loader["com.fsck.k9.account.AccountRemover"]
+            dump = remover_cls.disassemble()
 
             self.assertEqual(dump, expected_dump)
-            self.assertEqual(len(dump.splitlines()), 554)
+            self.assertEqual(len(dump.splitlines()), 64)
 
 
 if __name__ == "__main__":

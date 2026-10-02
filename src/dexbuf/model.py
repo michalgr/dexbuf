@@ -1397,6 +1397,13 @@ class CodeInstruction:
         return None
 
     @property
+    def target_field_class_descriptor(self) -> Descriptor | None:
+        fid = self.field_id
+        if fid is not None:
+            return self._method.defining_class.dex_file.get_type_descriptor(fid.class_idx)
+        return None
+
+    @property
     def target_field_name(self) -> str | None:
         fid = self.field_id
         if fid is not None:
@@ -1411,11 +1418,27 @@ class CodeInstruction:
         return None
 
     @property
+    def target_field_full_descriptor(self) -> str | None:
+        cls_desc = self.target_field_class_descriptor
+        name = self.target_field_name
+        type_desc = self.target_field_type_descriptor
+        if cls_desc is not None and name is not None and type_desc is not None:
+            return f"{cls_desc}->{name}:{type_desc}"
+        return None
+
+    @property
     def method_id(self) -> MethodIdItem | None:
         if has_id(self._insn, MethodIdItem):
             id_val = get_id(self._insn, MethodIdItem)
             if id_val is not None:
                 return self._method.defining_class.dex_file.get_method_id(id_val)
+        return None
+
+    @property
+    def target_method_class_descriptor(self) -> Descriptor | None:
+        mid = self.method_id
+        if mid is not None:
+            return self._method.defining_class.dex_file.get_type_descriptor(mid.class_idx)
         return None
 
     @property
@@ -1437,6 +1460,15 @@ class CodeInstruction:
                 tlist = dex.get_type_list(proto.parameters_off)
                 param_descs = [dex.get_type_descriptor(item.type_idx) for item in tlist.list]
             return format_method_descriptor(param_descs, ret_desc)
+        return None
+
+    @property
+    def target_method_full_descriptor(self) -> str | None:
+        cls_desc = self.target_method_class_descriptor
+        name = self.target_method_name
+        method_desc = self.target_method_descriptor
+        if cls_desc is not None and name is not None and method_desc is not None:
+            return f"{cls_desc}->{name}{method_desc}"
         return None
 
     @property
@@ -1878,10 +1910,10 @@ class Code:
                     details.append(f'"{inst.string_value}"')
                 elif inst.type_descriptor is not None:
                     details.append(f"{inst.type_descriptor}")
-                elif inst.target_field_name is not None:
-                    details.append(f"{inst.target_field_name}")
-                elif inst.target_method_name is not None:
-                    details.append(f"{inst.target_method_name}")
+                elif inst.target_field_full_descriptor is not None:
+                    details.append(f"{inst.target_field_full_descriptor}")
+                elif inst.target_method_full_descriptor is not None:
+                    details.append(f"{inst.target_method_full_descriptor}")
                 elif inst.literal is not None:
                     details.append(f"#{inst.literal}")
 

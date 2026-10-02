@@ -2436,6 +2436,71 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
             ".method public abstract abstractMethod()I",
         )
 
+    def test_code_instruction_target_field_and_method_descriptors(self) -> None:
+        from dexbuf.instructions import InvokeStaticRange, ReturnVoid, Sget
+        from dexbuf.items import FieldIdItem, MethodIdItem
+        from dexbuf.types import ArgumentCount, Idx, Reg
+
+        code_bytes = (
+            Sget(a=Reg(0), b=Idx[FieldIdItem](0)).to_bytes()
+            + InvokeStaticRange(a=ArgumentCount(1), b=Idx[MethodIdItem](0), c=Reg(0)).to_bytes()
+            + ReturnVoid().to_bytes()
+        )
+
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/TargetTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": int(AccessFlags.PUBLIC),
+                    "static_fields": [
+                        {
+                            "name": "TAG",
+                            "type": "Ljava/lang/String;",
+                            "access_flags": int(
+                                AccessFlags.PUBLIC | AccessFlags.STATIC | AccessFlags.FINAL
+                            ),
+                        }
+                    ],
+                    "direct_methods": [
+                        {
+                            "name": "helper",
+                            "return_type": "V",
+                            "params": ["I"],
+                            "access_flags": int(AccessFlags.PUBLIC | AccessFlags.STATIC),
+                            "code": code_bytes,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        m = loader["com.example.TargetTest"].get_method("helper")
+        self.assertIsNotNone(m)
+        assert m is not None and m.code is not None
+
+        inst0 = m.code.at(0)
+        self.assertEqual(inst0.target_field_class_descriptor, "Lcom/example/TargetTest;")
+        self.assertEqual(inst0.target_field_name, "TAG")
+        self.assertEqual(inst0.target_field_type_descriptor, "Ljava/lang/String;")
+        self.assertEqual(
+            inst0.target_field_full_descriptor,
+            "Lcom/example/TargetTest;->TAG:Ljava/lang/String;",
+        )
+
+        inst1 = m.code.at(2)
+        self.assertEqual(inst1.target_method_class_descriptor, "Lcom/example/TargetTest;")
+        self.assertEqual(inst1.target_method_name, "helper")
+        self.assertEqual(inst1.target_method_descriptor, "(I)V")
+        self.assertEqual(
+            inst1.target_method_full_descriptor,
+            "Lcom/example/TargetTest;->helper(I)V",
+        )
+
+        dis = m.code.disassemble()
+        self.assertIn("sget v0, Lcom/example/TargetTest;->TAG:Ljava/lang/String;", dis)
+        self.assertIn("invoke-static-range v0, Lcom/example/TargetTest;->helper(I)V", dis)
+
 
 if __name__ == "__main__":
     unittest.main()

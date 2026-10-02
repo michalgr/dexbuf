@@ -9,13 +9,13 @@
   .registers 1
   [Block #0]
     0000: const-string v0, "^(?:[a-zA-Z0-9!#$%&'*+\-/=?^_`{|}~]|\s)+$"
-    0002: invoke-static v0, compile
+    0002: invoke-static v0, Ljava/util/regex/Pattern;->compile(Ljava/lang/String;)Ljava/util/regex/Pattern;
     0005: move-result-object v0
-    0006: invoke-virtual v0, getClass
-    0009: sput-object v0, ATOM
+    0006: invoke-virtual v0, Ljava/lang/Object;->getClass()Ljava/lang/Class;
+    0009: sput-object v0, Lcom/fsck/k9/mail/Address;->ATOM:Ljava/util/regex/Pattern;
     000b: const-4 v0, #0
     000c: new-array v0, v0, [Lcom/fsck/k9/mail/Address;
-    000e: sput-object v0, EMPTY_ADDRESS_ARRAY
+    000e: sput-object v0, Lcom/fsck/k9/mail/Address;->EMPTY_ADDRESS_ARRAY:[Lcom/fsck/k9/mail/Address;
     0010: return-void
 .method public synthetic constructor <init>(ILjava/lang/String;Ljava/lang/String;)V
   .registers 4
@@ -26,20 +26,20 @@
     0004: const-4 p3, #0
   [Block #2]
     0005: const-4 p1, #1
-    0006: invoke-direct p0, p2, p3, p1, <init>
+    0006: invoke-direct p0, p2, p3, p1, Lcom/fsck/k9/mail/Address;-><init>(Ljava/lang/String;Ljava/lang/String;Z)V
     0009: return-void
 .method public constructor <init>(Ljava/lang/String;Ljava/lang/String;Z)V
   .registers 6
   [Block #0]
-    0000: invoke-virtual p1, getClass
-    0003: invoke-direct p0, <init>
-    0006: iput-object p1, p0, address
-    0008: iput-object p2, p0, personal
+    0000: invoke-virtual p1, Ljava/lang/Object;->getClass()Ljava/lang/Class;
+    0003: invoke-direct p0, Ljava/lang/Object;-><init>()V
+    0006: iput-object p1, p0, Lcom/fsck/k9/mail/Address;->address:Ljava/lang/String;
+    0008: iput-object p2, p0, Lcom/fsck/k9/mail/Address;->personal:Ljava/lang/String;
     000a: if-eqz p3, # 0040
   [Block #1]
-    000c: invoke-static p1, tokenize
+    000c: invoke-static p1, Landroidx/tracing/Trace;->tokenize(Ljava/lang/String;)[Lcom/fsck/k9/mail/helper/Rfc822Token;
     000f: move-result-object p3
-    0010: invoke-virtual p3, getClass
+    0010: invoke-virtual p3, Ljava/lang/Object;->getClass()Ljava/lang/Class;
     0013: array-length v0, p3
     0014: const-4 v1, #0
     0015: if-nez v0, # 0022
@@ -48,30 +48,30 @@
     0018: new-array p0, p0, [Ljava/lang/Object;
     001a: aput-object p1, p0, v1
     001c: const-string p1, "Invalid address: %s"
-    001e: invoke-static p1, p0, e
+    001e: invoke-static p1, p0, Lnet/thunderbird/legacy/logging/Log;->e(Ljava/lang/String;[Ljava/lang/Object;)V
     0021: return-void
   [Block #3]
     0022: aget-object p1, p3, v1
-    0024: iget-object p3, p1, mAddress
-    0026: iput-object p3, p0, address
-    0028: iget-object p1, p1, mName
+    0024: iget-object p3, p1, Lcom/fsck/k9/mail/helper/Rfc822Token;->mAddress:Ljava/lang/String;
+    0026: iput-object p3, p0, Lcom/fsck/k9/mail/Address;->address:Ljava/lang/String;
+    0028: iget-object p1, p1, Lcom/fsck/k9/mail/helper/Rfc822Token;->mName:Ljava/lang/String;
     002a: if-eqz p1, # 0032
   [Block #4]
-    002c: invoke-virtual p1, length
+    002c: invoke-virtual p1, Ljava/lang/String;->length()I
     002f: move-result p3
     0030: if-nez p3, # 003e
   [Block #5]
     0032: if-eqz p2, # 003d
   [Block #6]
-    0034: invoke-static p2, trim
+    0034: invoke-static p2, Lkotlin/text/StringsKt;->trim(Ljava/lang/CharSequence;)Ljava/lang/CharSequence;
     0037: move-result-object p1
-    0038: invoke-virtual p1, toString
+    0038: invoke-virtual p1, Ljava/lang/Object;->toString()Ljava/lang/String;
     003b: move-result-object p1
     003c: goto # 003e
   [Block #7]
     003d: const-4 p1, #0
   [Block #8]
-    003e: iput-object p1, p0, personal
+    003e: iput-object p1, p0, Lcom/fsck/k9/mail/Address;->personal:Ljava/lang/String;
   [Block #9]
     0040: return-void
 .method public final equals(Ljava/lang/Object;)Z
@@ -84,33 +84,33 @@
   [Block #2]
     0004: if-eqz p1, # 000b
   [Block #3]
-    0006: invoke-virtual p1, getClass
+    0006: invoke-virtual p1, Ljava/lang/Object;->getClass()Ljava/lang/Class;
     0009: move-result-object v1
     000a: goto # 000c
   [Block #4]
     000b: const-4 v1, #0
   [Block #5]
     000c: const-class v2, Lcom/fsck/k9/mail/Address;
-    000e: invoke-virtual v2, v1, equals
+    000e: invoke-virtual v2, v1, Ljava/lang/Object;->equals(Ljava/lang/Object;)Z
     0011: move-result v1
     0012: const-4 v2, #0
     0013: if-nez v1, # 0016
   [Block #6]
     0015: return v2
   [Block #7]
-    0016: invoke-virtual p1, getClass
+    0016: invoke-virtual p1, Ljava/lang/Object;->getClass()Ljava/lang/Class;
     0019: check-cast p1, Lcom/fsck/k9/mail/Address;
-    001b: iget-object v1, p0, address
-    001d: iget-object v3, p1, address
-    001f: invoke-static v1, v3, areEqual
+    001b: iget-object v1, p0, Lcom/fsck/k9/mail/Address;->address:Ljava/lang/String;
+    001d: iget-object v3, p1, Lcom/fsck/k9/mail/Address;->address:Ljava/lang/String;
+    001f: invoke-static v1, v3, Lkotlin/jvm/internal/Intrinsics;->areEqual(Ljava/lang/Object;Ljava/lang/Object;)Z
     0022: move-result v1
     0023: if-nez v1, # 0026
   [Block #8]
     0025: return v2
   [Block #9]
-    0026: iget-object p0, p0, personal
-    0028: iget-object p1, p1, personal
-    002a: invoke-static p0, p1, areEqual
+    0026: iget-object p0, p0, Lcom/fsck/k9/mail/Address;->personal:Ljava/lang/String;
+    0028: iget-object p1, p1, Lcom/fsck/k9/mail/Address;->personal:Ljava/lang/String;
+    002a: invoke-static p0, p1, Lkotlin/jvm/internal/Intrinsics;->areEqual(Ljava/lang/Object;Ljava/lang/Object;)Z
     002d: move-result p0
     002e: if-nez p0, # 0031
   [Block #10]
@@ -122,8 +122,8 @@
   [Block #0]
     0000: const-string v0, "@"
     0002: const-4 v1, #6
-    0003: iget-object p0, p0, address
-    0005: invoke-static v1, p0, v0, lastIndexOf$default
+    0003: iget-object p0, p0, Lcom/fsck/k9/mail/Address;->address:Ljava/lang/String;
+    0005: invoke-static v1, p0, v0, Lkotlin/text/StringsKt;->lastIndexOf$default(ILjava/lang/CharSequence;Ljava/lang/String;)I
     0008: move-result v0
     0009: const-4 v1, #-1
     000a: if-ne v0, v1, # 000e
@@ -132,20 +132,20 @@
     000d: return-object p0
   [Block #2]
     000e: add-int-lit8 v0, v0, #1
-    0010: invoke-virtual p0, v0, substring
+    0010: invoke-virtual p0, v0, Ljava/lang/String;->substring(I)Ljava/lang/String;
     0013: move-result-object p0
     0014: return-object p0
 .method public final hashCode()I
   .registers 2
   [Block #0]
-    0000: iget-object v0, p0, address
-    0002: invoke-virtual v0, hashCode
+    0000: iget-object v0, p0, Lcom/fsck/k9/mail/Address;->address:Ljava/lang/String;
+    0002: invoke-virtual v0, Ljava/lang/String;->hashCode()I
     0005: move-result v0
     0006: mul-int-lit8 v0, v0, #31
-    0008: iget-object p0, p0, personal
+    0008: iget-object p0, p0, Lcom/fsck/k9/mail/Address;->personal:Ljava/lang/String;
     000a: if-eqz p0, # 0011
   [Block #1]
-    000c: invoke-virtual p0, hashCode
+    000c: invoke-virtual p0, Ljava/lang/String;->hashCode()I
     000f: move-result p0
     0010: goto # 0012
   [Block #2]
@@ -156,18 +156,18 @@
 .method public final toEncodedString()Ljava/lang/String;
   .registers 12
   [Block #0]
-    0000: iget-object v0, p0, address
-    0002: iget-object p0, p0, personal
+    0000: iget-object v0, p0, Lcom/fsck/k9/mail/Address;->address:Ljava/lang/String;
+    0002: iget-object p0, p0, Lcom/fsck/k9/mail/Address;->personal:Ljava/lang/String;
     0004: if-eqz p0, # 0101
   [Block #1]
-    0006: invoke-static p0, isBlank
+    0006: invoke-static p0, Lkotlin/text/StringsKt;->isBlank(Ljava/lang/CharSequence;)Z
     0009: move-result v1
     000a: if-eqz v1, # 000e
   [Block #2]
     000c: goto-16 # 0101
   [Block #3]
-    000e: sget-object v1, BASE64_TABLE
-    0010: invoke-virtual p0, length
+    000e: sget-object v1, Lorg/apache/james/mime4j/codec/EncoderUtil;->BASE64_TABLE:[B
+    0010: invoke-virtual p0, Ljava/lang/String;->length()I
     0013: move-result v1
     0014: const-4 v2, #0
     0015: move v3, v2
@@ -176,17 +176,17 @@
     0017: const-4 v5, #1
     0018: if-ge v3, v1, # 0033
   [Block #5]
-    001a: invoke-virtual p0, v3, charAt
+    001a: invoke-virtual p0, v3, Ljava/lang/String;->charAt(I)C
     001d: move-result v6
-    001e: sget-object v7, ATEXT_CHARS
-    0020: invoke-virtual v7, v6, get
+    001e: sget-object v7, Lorg/apache/james/mime4j/codec/EncoderUtil;->ATEXT_CHARS:Ljava/util/BitSet;
+    0020: invoke-virtual v7, v6, Ljava/util/BitSet;->get(I)Z
     0023: move-result v7
     0024: if-eqz v7, # 0028
   [Block #6]
     0026: move v4, v5
     0027: goto # 0030
   [Block #7]
-    0028: invoke-static v6, isWhitespace
+    0028: invoke-static v6, Lokhttp3/Cookie$Companion;->isWhitespace(C)Z
     002b: move-result v6
     002c: if-nez v6, # 0030
   [Block #8]
@@ -203,11 +203,11 @@
     0037: move v1, v2
     0038: move v3, v1
   [Block #13]
-    0039: invoke-virtual p0, length
+    0039: invoke-virtual p0, Ljava/lang/String;->length()I
     003c: move-result v4
     003d: if-ge v1, v4, # 00d9
   [Block #14]
-    003f: invoke-virtual p0, v1, charAt
+    003f: invoke-virtual p0, v1, Ljava/lang/String;->charAt(I)C
     0042: move-result v4
     0043: const-16 v6, #9
     0045: if-eq v4, v6, # 00d4
@@ -228,18 +228,18 @@
   [Block #20]
     0057: if-lt v4, v8, # 00d5
   [Block #21]
-    0059: invoke-virtual p0, length
+    0059: invoke-virtual p0, Ljava/lang/String;->length()I
     005c: move-result v1
     005d: move v3, v2
   [Block #22]
     005e: const-16 v4, #255
     0060: if-ge v3, v1, # 0071
   [Block #23]
-    0062: invoke-virtual p0, v3, charAt
+    0062: invoke-virtual p0, v3, Ljava/lang/String;->charAt(I)C
     0065: move-result v7
     0066: if-le v7, v4, # 006b
   [Block #24]
-    0068: sget-object v1, UTF_8
+    0068: sget-object v1, Lorg/apache/james/mime4j/Charsets;->UTF_8:Ljava/nio/charset/Charset;
     006a: goto # 0078
   [Block #25]
     006b: if-le v7, v8, # 006e
@@ -251,12 +251,12 @@
   [Block #28]
     0071: if-eqz v5, # 0076
   [Block #29]
-    0073: sget-object v1, US_ASCII
+    0073: sget-object v1, Lorg/apache/james/mime4j/Charsets;->US_ASCII:Ljava/nio/charset/Charset;
     0075: goto # 0078
   [Block #30]
-    0076: sget-object v1, ISO_8859_1
+    0076: sget-object v1, Lorg/apache/james/mime4j/Charsets;->ISO_8859_1:Ljava/nio/charset/Charset;
   [Block #31]
-    0078: invoke-static p0, v1, encode
+    0078: invoke-static p0, v1, Lorg/apache/james/mime4j/codec/EncoderUtil;->encode(Ljava/lang/String;Ljava/nio/charset/Charset;)[B
     007b: move-result-object v3
     007c: array-length v5, v3
     007d: const-string v7, "=?"
@@ -264,7 +264,7 @@
   [Block #32]
     0081: goto # 00ba
   [Block #33]
-    0082: sget-object v5, Q_RESTRICTED_CHARS
+    0082: sget-object v5, Lorg/apache/james/mime4j/codec/EncoderUtil;->Q_RESTRICTED_CHARS:Ljava/util/BitSet;
     0084: array-length v8, v3
     0085: move v9, v2
   [Block #34]
@@ -274,7 +274,7 @@
     008a: and-int-2addr v10, v4
     008b: if-eq v10, v6, # 0095
   [Block #36]
-    008d: invoke-virtual v5, v10, get
+    008d: invoke-virtual v5, v10, Ljava/util/BitSet;->get(I)Z
     0090: move-result v10
     0091: if-nez v10, # 0095
   [Block #37]
@@ -290,28 +290,28 @@
     009e: if-le v9, v2, # 00ba
   [Block #40]
     00a0: new-instance v2, Ljava/lang/StringBuilder;
-    00a2: invoke-direct v2, v7, <init>
-    00a5: invoke-virtual v1, name
+    00a2: invoke-direct v2, v7, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
+    00a5: invoke-virtual v1, Ljava/nio/charset/Charset;->name()Ljava/lang/String;
     00a8: move-result-object v4
-    00a9: invoke-virtual v2, v4, append
+    00a9: invoke-virtual v2, v4, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
     00ac: const-string v4, "?B?"
-    00ae: invoke-virtual v2, v4, append
-    00b1: invoke-virtual v2, toString
+    00ae: invoke-virtual v2, v4, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    00b1: invoke-virtual v2, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
     00b4: move-result-object v2
-    00b5: invoke-static v2, p0, v1, v3, encodeB
+    00b5: invoke-static v2, p0, v1, v3, Lorg/apache/james/mime4j/codec/EncoderUtil;->encodeB(Ljava/lang/String;Ljava/lang/String;Ljava/nio/charset/Charset;[B)Ljava/lang/String;
     00b8: move-result-object p0
     00b9: goto # 00f8
   [Block #41]
     00ba: new-instance v2, Ljava/lang/StringBuilder;
-    00bc: invoke-direct v2, v7, <init>
-    00bf: invoke-virtual v1, name
+    00bc: invoke-direct v2, v7, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
+    00bf: invoke-virtual v1, Ljava/nio/charset/Charset;->name()Ljava/lang/String;
     00c2: move-result-object v4
-    00c3: invoke-virtual v2, v4, append
+    00c3: invoke-virtual v2, v4, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
     00c6: const-string v4, "?Q?"
-    00c8: invoke-virtual v2, v4, append
-    00cb: invoke-virtual v2, toString
+    00c8: invoke-virtual v2, v4, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+    00cb: invoke-virtual v2, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
     00ce: move-result-object v2
-    00cf: invoke-static v2, p0, v1, v3, encodeQ
+    00cf: invoke-static v2, p0, v1, v3, Lorg/apache/james/mime4j/codec/EncoderUtil;->encodeQ(Ljava/lang/String;Ljava/lang/String;Ljava/nio/charset/Charset;[B)Ljava/lang/String;
     00d2: move-result-object p0
     00d3: goto # 00f8
   [Block #42]
@@ -322,22 +322,22 @@
   [Block #44]
     00d9: new-instance v1, Ljava/lang/StringBuilder;
     00db: const-string v2, """
-    00dd: invoke-direct v1, v2, <init>
-    00e0: sget-object v2, QUOTE
-    00e2: invoke-virtual v2, p0, matcher
+    00dd: invoke-direct v1, v2, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
+    00e0: sget-object v2, Lorg/apache/james/mime4j/codec/EncoderUtil;->QUOTE:Ljava/util/regex/Pattern;
+    00e2: invoke-virtual v2, p0, Ljava/util/regex/Pattern;->matcher(Ljava/lang/CharSequence;)Ljava/util/regex/Matcher;
     00e5: move-result-object p0
     00e6: const-string v2, "\\$0"
-    00e8: invoke-virtual p0, v2, replaceAll
+    00e8: invoke-virtual p0, v2, Ljava/util/regex/Matcher;->replaceAll(Ljava/lang/String;)Ljava/lang/String;
     00eb: move-result-object p0
-    00ec: invoke-virtual v1, p0, append
+    00ec: invoke-virtual v1, p0, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
     00ef: const-16 p0, #34
-    00f1: invoke-virtual v1, p0, append
-    00f4: invoke-virtual v1, toString
+    00f1: invoke-virtual v1, p0, Ljava/lang/StringBuilder;->append(C)Ljava/lang/StringBuilder;
+    00f4: invoke-virtual v1, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
     00f7: move-result-object p0
   [Block #45]
     00f8: const-string v1, " <"
     00fa: const-string v2, ">"
-    00fc: invoke-static p0, v1, v0, v2, m
+    00fc: invoke-static p0, v1, v0, v2, Lcoil3/size/ViewSizeResolver$-CC;->m(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
     00ff: move-result-object p0
     0100: return-object p0
   [Block #46]
@@ -345,11 +345,11 @@
 .method public final toString()Ljava/lang/String;
   .registers 4
   [Block #0]
-    0000: iget-object v0, p0, address
-    0002: iget-object p0, p0, personal
+    0000: iget-object v0, p0, Lcom/fsck/k9/mail/Address;->address:Ljava/lang/String;
+    0002: iget-object p0, p0, Lcom/fsck/k9/mail/Address;->personal:Ljava/lang/String;
     0004: if-eqz p0, # 0041
   [Block #1]
-    0006: invoke-static p0, isBlank
+    0006: invoke-static p0, Lkotlin/text/StringsKt;->isBlank(Ljava/lang/CharSequence;)Z
     0009: move-result v1
     000a: if-eqz v1, # 000d
   [Block #2]
@@ -357,29 +357,29 @@
   [Block #3]
     000d: if-eqz p0, # 0037
   [Block #4]
-    000f: sget-object v1, ATOM
-    0011: invoke-virtual v1, p0, matcher
+    000f: sget-object v1, Lcom/fsck/k9/mail/Address;->ATOM:Ljava/util/regex/Pattern;
+    0011: invoke-virtual v1, p0, Ljava/util/regex/Pattern;->matcher(Ljava/lang/CharSequence;)Ljava/util/regex/Matcher;
     0014: move-result-object v1
-    0015: invoke-virtual v1, matches
+    0015: invoke-virtual v1, Ljava/util/regex/Matcher;->matches()Z
     0018: move-result v1
     0019: if-eqz v1, # 001c
   [Block #5]
     001b: goto # 0038
   [Block #6]
     001c: const-string v1, "^".*"$"
-    001e: invoke-static v1, compile
+    001e: invoke-static v1, Ljava/util/regex/Pattern;->compile(Ljava/lang/String;)Ljava/util/regex/Pattern;
     0021: move-result-object v1
-    0022: invoke-virtual v1, getClass
-    0025: invoke-virtual v1, p0, matcher
+    0022: invoke-virtual v1, Ljava/lang/Object;->getClass()Ljava/lang/Class;
+    0025: invoke-virtual v1, p0, Ljava/util/regex/Pattern;->matcher(Ljava/lang/CharSequence;)Ljava/util/regex/Matcher;
     0028: move-result-object v1
-    0029: invoke-virtual v1, matches
+    0029: invoke-virtual v1, Ljava/util/regex/Matcher;->matches()Z
     002c: move-result v1
     002d: if-eqz v1, # 0030
   [Block #7]
     002f: goto # 0038
   [Block #8]
     0030: const-string v1, """
-    0032: invoke-static v1, p0, v1, m
+    0032: invoke-static v1, p0, v1, Landroidx/camera/camera2/pipe/CameraDevices$-CC;->m(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
     0035: move-result-object p0
     0036: goto # 0038
   [Block #9]
@@ -387,7 +387,7 @@
   [Block #10]
     0038: const-string v1, " <"
     003a: const-string v2, ">"
-    003c: invoke-static p0, v1, v0, v2, m
+    003c: invoke-static p0, v1, v0, v2, Lcoil3/size/ViewSizeResolver$-CC;->m(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
     003f: move-result-object p0
     0040: return-object p0
   [Block #11]

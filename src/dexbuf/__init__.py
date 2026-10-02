@@ -102,6 +102,7 @@ from dexbuf.mmap import open_mmap, scoped_mmap
 from dexbuf.model import (
     Annotation,
     BasicBlock,
+    CatchEdge,
     CatchHandler,
     Class,
     ClassLoader,
@@ -192,6 +193,7 @@ __all__ = [
     "BasicBlock",
     "BranchOffset",
     "CallSiteIdItem",
+    "CatchEdge",
     "CatchHandler",
     "CatchHandlerMap",
     "CentralDirectoryHeader",

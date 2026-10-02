@@ -2502,5 +2502,81 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         self.assertIn("invoke-static-range v0, Lcom/example/TargetTest;->helper(I)V", dis)
 
 
+class TestDisassemblyMetadata(unittest.TestCase):
+    def test_disassemble_cfg_preds_and_succs(self) -> None:
+        code_bytes = (
+            b"\x12\x00"  # 0000: const/4 v0, #0
+            b"\x38\x00\x03\x00"  # 0001: if-eqz v0, +3 -> 0004
+            b"\x12\x10"  # 0003: const/4 v0, #1
+            b"\x0e\x00"  # 0004: return-void
+        )
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/CFGDisasm;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "direct_methods": [
+                        {
+                            "name": "branch",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": 1,
+                            "code": code_bytes,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        m = loader["com.example.CFGDisasm"].get_method("branch")
+        assert m is not None and m.code is not None
+
+        dis = m.code.disassemble()
+        self.assertIn("  [Block #0]\n    ; preds: none\n    ; succs: #1, #2", dis)
+        self.assertIn("  [Block #1]\n    ; preds: #0\n    ; succs: #2", dis)
+        self.assertIn("  [Block #2]\n    ; preds: #0, #1\n    ; succs: none", dis)
+
+    def test_disassemble_catches_and_handler_for(self) -> None:
+        insns = b"\x12\x00\x0e\x00\x27\x00\x0e\x00"
+        try_item_bytes = struct.pack("<IHH", 0, 1, 1)
+        handlers_bytes = b"\x01\x00\x02"
+        header = struct.pack("<4H2I", 1, 0, 0, 1, 0, 4)
+        full_code_item = header + insns + try_item_bytes + handlers_bytes
+
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/TryCatchDisasm;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "direct_methods": [
+                        {
+                            "name": "tryCatchMethod",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": 1,
+                            "is_full_code_item": True,
+                            "code": full_code_item,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        m = loader["com.example.TryCatchDisasm"].get_method("tryCatchMethod")
+        assert m is not None and m.code is not None
+
+        dis = m.code.disassemble()
+        self.assertIn(
+            "  [Block #0]\n    ; preds: none\n    ; succs: #1\n    ; catches: catch-all -> #2",
+            dis,
+        )
+        self.assertIn(
+            "  [Block #2]\n    ; preds: none\n    ; succs: none\n    ; handler for: catch-all",
+            dis,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

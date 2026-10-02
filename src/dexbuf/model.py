@@ -1661,6 +1661,64 @@ class BasicBlock:
     def __len__(self) -> int:
         return len(self._instructions)
 
+    def disassemble(
+        self,
+        pc_to_block_id: Mapping[int, int] | None = None,
+        handler_types: Sequence[str] = (),
+    ) -> str:
+        """Format smali disassembly for this basic block with CFG and exception metadata."""
+        lines: list[str] = [f"  [Block #{self._id}]"]
+
+        preds_str = (
+            ", ".join(f"#{b.id}" for b in self._predecessors) if self._predecessors else "none"
+        )
+        lines.append(f"    ; preds: {preds_str}")
+
+        succs_str = ", ".join(f"#{b.id}" for b in self._successors) if self._successors else "none"
+        lines.append(f"    ; succs: {succs_str}")
+
+        if handler_types:
+            lines.append(f"    ; handler for: {', '.join(handler_types)}")
+
+        if self._exception_handlers:
+            catches_parts: list[str] = []
+            for h in self._exception_handlers:
+                htype = h.type_descriptor if h.type_descriptor is not None else "catch-all"
+                if pc_to_block_id is not None and h.target_pc in pc_to_block_id:
+                    target_id = f"#{pc_to_block_id[h.target_pc]}"
+                else:
+                    target_id = f"0x{h.target_pc:04x}"
+                c_entry = f"{htype} -> {target_id}"
+                if c_entry not in catches_parts:
+                    catches_parts.append(c_entry)
+            if catches_parts:
+                lines.append(f"    ; catches: {', '.join(catches_parts)}")
+
+        for inst in self._instructions:
+            parts: list[str] = [f"    {inst.pc:04x}: {inst.mnemonic}"]
+            details: list[str] = []
+            if inst.register_names:
+                details.append(", ".join(inst.register_names))
+            if inst.string_value is not None:
+                details.append(f'"{inst.string_value}"')
+            elif inst.type_descriptor is not None:
+                details.append(f"{inst.type_descriptor}")
+            elif inst.target_field_full_descriptor is not None:
+                details.append(f"{inst.target_field_full_descriptor}")
+            elif inst.target_method_full_descriptor is not None:
+                details.append(f"{inst.target_method_full_descriptor}")
+            elif inst.literal is not None:
+                details.append(f"#{inst.literal}")
+
+            if inst.target_pc is not None:
+                details.append(f"# {inst.target_pc:04x}")
+
+            if details:
+                parts.append(" " + ", ".join(details))
+            lines.append("".join(parts))
+
+        return "\n".join(lines)
+
     def __repr__(self) -> str:
         return f"<BasicBlock {self._id} [0x{self._start_pc:04x}..0x{self._end_pc:04x}]>"
 
@@ -1899,30 +1957,23 @@ class Code:
             f"{mhead}{self._method.name}{self._method.descriptor}",
             f"  .registers {self.registers_size}",
         ]
+
+        pc_to_block_id: dict[int, int] = {b.start_pc: b.id for b in self._blocks}
+
+        handler_entry_points: dict[int, list[str]] = {}
+        for tc in self._try_catches:
+            for handler in tc.handlers:
+                htype = (
+                    handler.type_descriptor if handler.type_descriptor is not None else "catch-all"
+                )
+                entry_list = handler_entry_points.setdefault(handler.target_pc, [])
+                if htype not in entry_list:
+                    entry_list.append(htype)
+
         for block in self._blocks:
-            lines.append(f"  [Block #{block.id}]")
-            for inst in block.instructions:
-                parts: list[str] = [f"    {inst.pc:04x}: {inst.mnemonic}"]
-                details: list[str] = []
-                if inst.register_names:
-                    details.append(", ".join(inst.register_names))
-                if inst.string_value is not None:
-                    details.append(f'"{inst.string_value}"')
-                elif inst.type_descriptor is not None:
-                    details.append(f"{inst.type_descriptor}")
-                elif inst.target_field_full_descriptor is not None:
-                    details.append(f"{inst.target_field_full_descriptor}")
-                elif inst.target_method_full_descriptor is not None:
-                    details.append(f"{inst.target_method_full_descriptor}")
-                elif inst.literal is not None:
-                    details.append(f"#{inst.literal}")
+            htypes = handler_entry_points.get(block.start_pc, ())
+            lines.append(block.disassemble(pc_to_block_id=pc_to_block_id, handler_types=htypes))
 
-                if inst.target_pc is not None:
-                    details.append(f"# {inst.target_pc:04x}")
-
-                if details:
-                    parts.append(" " + ", ".join(details))
-                lines.append("".join(parts))
         return "\n".join(lines)
 
     def __repr__(self) -> str:

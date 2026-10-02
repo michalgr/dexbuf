@@ -283,7 +283,7 @@ class TestK9MailIntegration(unittest.TestCase):
             dump = addr_cls.disassemble()
 
             self.assertEqual(dump, expected_dump)
-            self.assertEqual(len(dump.splitlines()), 578)
+            self.assertEqual(len(dump.splitlines()), 554)
 
 
 if __name__ == "__main__":

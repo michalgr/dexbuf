@@ -6,14 +6,8 @@ import sys
 from collections.abc import Sequence
 
 import dexbuf
-from dexbuf.model import ResolvedClass
 
-__all__ = ["disassemble_class", "main"]
-
-
-def disassemble_class(cls: ResolvedClass) -> str:
-    """Format the full disassembly for a ResolvedClass."""
-    return cls.disassemble()
+__all__ = ["main"]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -57,7 +51,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         f"container {args.container!r}.\n"
                     )
                     return 1
-                sys.stdout.write(disassemble_class(cls) + "\n")
+                sys.stdout.write(cls.disassemble() + "\n")
                 return 0
 
             # Default action or --list: list defined classes

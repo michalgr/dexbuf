@@ -2617,11 +2617,20 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         edge = block0.catch_edges[0]
         self.assertIsInstance(edge, CatchEdge)
         self.assertIsInstance(edge.handler, CatchHandler)
+        self.assertIs(edge.source_block, block0)
         self.assertEqual(edge.target_block.start_pc, 3)
+        self.assertEqual(len(code.try_catches), 1)
+        self.assertIs(edge.try_catch, code.try_catches[0])
+        self.assertEqual(edge.target_pc, 3)
+        self.assertEqual(edge.type_name, "com.example.TryCatchTest")
+
         self.assertEqual(block0.exception_successors, (edge.target_block,))
+        self.assertEqual(block0.exception_handlers, (edge.handler,))
 
         handler_block = block0.exception_successors[0]
         self.assertTrue(handler_block.is_catch_handler)
+        self.assertEqual(handler_block.incoming_catch_edges, (edge,))
+        self.assertEqual(handler_block.exception_predecessors, (block0,))
         self.assertEqual(len(handler_block.handled_catches), 1)
         self.assertEqual(handler_block.handled_catches[0], edge.handler)
         self.assertEqual(handler_block.protected_blocks, (block0,))
@@ -2630,8 +2639,8 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         dis = code.disassemble()
         self.assertIn("; preds:", dis)
         self.assertIn("; succs:", dis)
-        self.assertIn("; handler for:", dis)
-        self.assertIn("; catches:", dis)
+        self.assertIn("; handler for: Lcom/example/TryCatchTest;", dis)
+        self.assertIn("; catches: Lcom/example/TryCatchTest; -> #2", dis)
 
 
 if __name__ == "__main__":

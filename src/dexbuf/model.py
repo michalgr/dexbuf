@@ -1571,16 +1571,26 @@ class CatchHandler:
 class CatchEdge:
     """Represents an exception handling transition from a protected block to a handler block."""
 
-    handler: CatchHandler
+    source_block: BasicBlock
     target_block: BasicBlock
+    try_catch: TryCatch
+    handler: CatchHandler
 
     @property
     def type_descriptor(self) -> Descriptor | None:
         return self.handler.type_descriptor
 
     @property
+    def type_name(self) -> str | None:
+        return self.handler.type_name
+
+    @property
     def is_catch_all(self) -> bool:
         return self.handler.is_catch_all
+
+    @property
+    def target_pc(self) -> int:
+        return self.handler.target_pc
 
 
 class TryCatch:
@@ -1623,12 +1633,10 @@ class BasicBlock:
     __slots__ = (
         "_catch_edges",
         "_end_pc",
-        "_exception_handlers",
-        "_handled_catches",
         "_id",
+        "_incoming_catch_edges",
         "_instructions",
         "_predecessors",
-        "_protected_blocks",
         "_start_pc",
         "_successors",
         "_terminator",
@@ -1641,19 +1649,16 @@ class BasicBlock:
         end_pc: int,
         instructions: tuple[CodeInstruction, ...],
         terminator: CodeInstruction,
-        exception_handlers: tuple[CatchHandler, ...] = (),
     ) -> None:
         self._id: int = id
         self._start_pc: int = start_pc
         self._end_pc: int = end_pc
         self._instructions: tuple[CodeInstruction, ...] = instructions
         self._terminator: CodeInstruction = terminator
-        self._exception_handlers: tuple[CatchHandler, ...] = exception_handlers
         self._predecessors: tuple[BasicBlock, ...] = ()
         self._successors: tuple[BasicBlock, ...] = ()
         self._catch_edges: tuple[CatchEdge, ...] = ()
-        self._handled_catches: tuple[CatchHandler, ...] = ()
-        self._protected_blocks: tuple[BasicBlock, ...] = ()
+        self._incoming_catch_edges: tuple[CatchEdge, ...] = ()
 
     @property
     def catch_edges(self) -> tuple[CatchEdge, ...]:
@@ -1664,16 +1669,24 @@ class BasicBlock:
         return tuple(edge.target_block for edge in self._catch_edges)
 
     @property
+    def incoming_catch_edges(self) -> tuple[CatchEdge, ...]:
+        return self._incoming_catch_edges
+
+    @property
+    def exception_predecessors(self) -> tuple[BasicBlock, ...]:
+        return tuple(dict.fromkeys(edge.source_block for edge in self._incoming_catch_edges))
+
+    @property
     def is_catch_handler(self) -> bool:
-        return bool(self._handled_catches)
+        return bool(self._incoming_catch_edges)
 
     @property
     def handled_catches(self) -> tuple[CatchHandler, ...]:
-        return self._handled_catches
+        return tuple(dict.fromkeys(edge.handler for edge in self._incoming_catch_edges))
 
     @property
     def protected_blocks(self) -> tuple[BasicBlock, ...]:
-        return self._protected_blocks
+        return tuple(dict.fromkeys(edge.source_block for edge in self._incoming_catch_edges))
 
     @property
     def id(self) -> int:
@@ -1705,7 +1718,7 @@ class BasicBlock:
 
     @property
     def exception_handlers(self) -> tuple[CatchHandler, ...]:
-        return self._exception_handlers
+        return tuple(edge.handler for edge in self._catch_edges)
 
     @property
     def is_entry(self) -> bool:
@@ -1726,10 +1739,9 @@ class BasicBlock:
 
         if self.is_catch_handler:
             types = [
-                h.type_descriptor if h.type_descriptor is not None else "catch-all"
-                for h in self._handled_catches
+                edge.type_descriptor if edge.type_descriptor is not None else "catch-all"
+                for edge in self._incoming_catch_edges
             ]
-            # preserve order, unique
             unique_types = list(dict.fromkeys(types))
             lines.append(f"    ; handler for: {', '.join(unique_types)}")
 
@@ -1873,18 +1885,12 @@ class Code:
                 continue
             terminator = block_insts[-1]
 
-            block_handlers: list[CatchHandler] = []
-            for tc in try_catches:
-                if tc.covers(start_pc):
-                    block_handlers.extend(tc.handlers)
-
             block = BasicBlock(
                 id=len(blocks_list),
                 start_pc=start_pc,
                 end_pc=end_pc,
                 instructions=tuple(block_insts),
                 terminator=terminator,
-                exception_handlers=tuple(block_handlers),
             )
             blocks_list.append(block)
             block_by_start_pc[start_pc] = block
@@ -1905,28 +1911,27 @@ class Code:
             block._predecessors = tuple(preds_map[block.id])
             block._successors = tuple(succs_map[block.id])
 
+        incoming_edges_map: dict[int, list[CatchEdge]] = {b.id: [] for b in blocks_list}
+
         for block in blocks_list:
             catch_edges: list[CatchEdge] = []
-            for handler in block.exception_handlers:
-                if handler.target_pc in block_by_start_pc:
-                    target_block = block_by_start_pc[handler.target_pc]
-                    catch_edges.append(CatchEdge(handler=handler, target_block=target_block))
+            for tc in try_catches:
+                if tc.covers(block.start_pc):
+                    for handler in tc.handlers:
+                        if handler.target_pc in block_by_start_pc:
+                            target_block = block_by_start_pc[handler.target_pc]
+                            edge = CatchEdge(
+                                source_block=block,
+                                target_block=target_block,
+                                try_catch=tc,
+                                handler=handler,
+                            )
+                            catch_edges.append(edge)
+                            incoming_edges_map[target_block.id].append(edge)
             block._catch_edges = tuple(catch_edges)
 
-        handled_catches_map: dict[int, list[CatchHandler]] = {b.id: [] for b in blocks_list}
-        protected_blocks_map: dict[int, list[BasicBlock]] = {b.id: [] for b in blocks_list}
-
         for block in blocks_list:
-            for edge in block.catch_edges:
-                target_id = edge.target_block.id
-                if edge.handler not in handled_catches_map[target_id]:
-                    handled_catches_map[target_id].append(edge.handler)
-                if block not in protected_blocks_map[target_id]:
-                    protected_blocks_map[target_id].append(block)
-
-        for block in blocks_list:
-            block._handled_catches = tuple(handled_catches_map[block.id])
-            block._protected_blocks = tuple(protected_blocks_map[block.id])
+            block._incoming_catch_edges = tuple(incoming_edges_map[block.id])
 
         return tuple(blocks_list)
 

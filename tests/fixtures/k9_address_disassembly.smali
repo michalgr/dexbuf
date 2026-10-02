@@ -8,8 +8,6 @@
 .method static constructor <clinit>()V
   .registers 1
   [Block #0]
-    ; preds: none
-    ; succs: none
     0000: const-string v0, "^(?:[a-zA-Z0-9!#$%&'*+\-/=?^_`{|}~]|\s)+$"
     0002: invoke-static v0, Ljava/util/regex/Pattern;->compile(Ljava/lang/String;)Ljava/util/regex/Pattern;
     0005: move-result-object v0
@@ -22,7 +20,6 @@
 .method public synthetic constructor <init>(ILjava/lang/String;Ljava/lang/String;)V
   .registers 4
   [Block #0]
-    ; preds: none
     ; succs: #1, #2
     0000: and-int-lit8 p1, p1, #2
     0002: if-eqz p1, # 0005
@@ -32,14 +29,12 @@
     0004: const-4 p3, #0
   [Block #2]
     ; preds: #0, #1
-    ; succs: none
     0005: const-4 p1, #1
     0006: invoke-direct p0, p2, p3, p1, Lcom/fsck/k9/mail/Address;-><init>(Ljava/lang/String;Ljava/lang/String;Z)V
     0009: return-void
 .method public constructor <init>(Ljava/lang/String;Ljava/lang/String;Z)V
   .registers 6
   [Block #0]
-    ; preds: none
     ; succs: #1, #9
     0000: invoke-virtual p1, Ljava/lang/Object;->getClass()Ljava/lang/Class;
     0003: invoke-direct p0, Ljava/lang/Object;-><init>()V
@@ -57,7 +52,6 @@
     0015: if-nez v0, # 0022
   [Block #2]
     ; preds: #1
-    ; succs: none
     0017: const-4 p0, #1
     0018: new-array p0, p0, [Ljava/lang/Object;
     001a: aput-object p1, p0, v1
@@ -100,18 +94,15 @@
     003e: iput-object p1, p0, Lcom/fsck/k9/mail/Address;->personal:Ljava/lang/String;
   [Block #9]
     ; preds: #0, #8
-    ; succs: none
     0040: return-void
 .method public final equals(Ljava/lang/Object;)Z
   .registers 6
   [Block #0]
-    ; preds: none
     ; succs: #1, #2
     0000: const-4 v0, #1
     0001: if-ne p0, p1, # 0004
   [Block #1]
     ; preds: #0
-    ; succs: none
     0003: return v0
   [Block #2]
     ; preds: #0
@@ -137,7 +128,6 @@
     0013: if-nez v1, # 0016
   [Block #6]
     ; preds: #5
-    ; succs: none
     0015: return v2
   [Block #7]
     ; preds: #5
@@ -151,7 +141,6 @@
     0023: if-nez v1, # 0026
   [Block #8]
     ; preds: #7
-    ; succs: none
     0025: return v2
   [Block #9]
     ; preds: #7
@@ -163,16 +152,13 @@
     002e: if-nez p0, # 0031
   [Block #10]
     ; preds: #9
-    ; succs: none
     0030: return v2
   [Block #11]
     ; preds: #9
-    ; succs: none
     0031: return v0
 .method public final getHostname()Ljava/lang/String;
   .registers 3
   [Block #0]
-    ; preds: none
     ; succs: #1, #2
     0000: const-string v0, "@"
     0002: const-4 v1, #6
@@ -183,12 +169,10 @@
     000a: if-ne v0, v1, # 000e
   [Block #1]
     ; preds: #0
-    ; succs: none
     000c: const-4 p0, #0
     000d: return-object p0
   [Block #2]
     ; preds: #0
-    ; succs: none
     000e: add-int-lit8 v0, v0, #1
     0010: invoke-virtual p0, v0, Ljava/lang/String;->substring(I)Ljava/lang/String;
     0013: move-result-object p0
@@ -196,7 +180,6 @@
 .method public final hashCode()I
   .registers 2
   [Block #0]
-    ; preds: none
     ; succs: #1, #2
     0000: iget-object v0, p0, Lcom/fsck/k9/mail/Address;->address:Ljava/lang/String;
     0002: invoke-virtual v0, Ljava/lang/String;->hashCode()I
@@ -216,13 +199,11 @@
     0011: const-4 p0, #0
   [Block #3]
     ; preds: #1, #2
-    ; succs: none
     0012: add-int-2addr v0, p0
     0013: return v0
 .method public final toEncodedString()Ljava/lang/String;
   .registers 12
   [Block #0]
-    ; preds: none
     ; succs: #1, #46
     0000: iget-object v0, p0, Lcom/fsck/k9/mail/Address;->address:Ljava/lang/String;
     0002: iget-object p0, p0, Lcom/fsck/k9/mail/Address;->personal:Ljava/lang/String;
@@ -492,7 +473,6 @@
     00f7: move-result-object p0
   [Block #45]
     ; preds: #11, #40, #41, #44
-    ; succs: none
     00f8: const-string v1, " <"
     00fa: const-string v2, ">"
     00fc: invoke-static p0, v1, v0, v2, Lcoil3/size/ViewSizeResolver$-CC;->m(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
@@ -500,12 +480,10 @@
     0100: return-object p0
   [Block #46]
     ; preds: #0, #2
-    ; succs: none
     0101: return-object v0
 .method public final toString()Ljava/lang/String;
   .registers 4
   [Block #0]
-    ; preds: none
     ; succs: #1, #11
     0000: iget-object v0, p0, Lcom/fsck/k9/mail/Address;->address:Ljava/lang/String;
     0002: iget-object p0, p0, Lcom/fsck/k9/mail/Address;->personal:Ljava/lang/String;
@@ -566,7 +544,6 @@
     0037: const-4 p0, #0
   [Block #10]
     ; preds: #5, #7, #8, #9
-    ; succs: none
     0038: const-string v1, " <"
     003a: const-string v2, ">"
     003c: invoke-static p0, v1, v0, v2, Lcoil3/size/ViewSizeResolver$-CC;->m(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
@@ -574,5 +551,4 @@
     0040: return-object p0
   [Block #11]
     ; preds: #0, #2
-    ; succs: none
     0041: return-object v0

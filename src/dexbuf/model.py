@@ -1732,10 +1732,13 @@ class BasicBlock:
         """Format the smali disassembly for this basic block."""
         lines: list[str] = [f"  [Block #{self._id}]"]
 
-        preds_str = ", ".join(f"#{p.id}" for p in self._predecessors) or "none"
-        succs_str = ", ".join(f"#{s.id}" for s in self._successors) or "none"
-        lines.append(f"    ; preds: {preds_str}")
-        lines.append(f"    ; succs: {succs_str}")
+        if self._predecessors:
+            preds_str = ", ".join(f"#{p.id}" for p in self._predecessors)
+            lines.append(f"    ; preds: {preds_str}")
+
+        if self._successors:
+            succs_str = ", ".join(f"#{s.id}" for s in self._successors)
+            lines.append(f"    ; succs: {succs_str}")
 
         if self.is_catch_handler:
             types = [

@@ -2639,6 +2639,13 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         dis = code.disassemble()
         self.assertIn("; preds:", dis)
         self.assertIn("; succs:", dis)
+        self.assertNotIn("; preds: none", dis)
+        self.assertNotIn("; succs: none", dis)
+
+        # Block 0 has no normal predecessors or successors,
+        # so neither ; preds: nor ; succs: should appear
+        self.assertNotIn("; preds:", block0.disassemble())
+        self.assertNotIn("; succs:", block0.disassemble())
         self.assertIn("; handler for: Lcom/example/TryCatchTest;", dis)
         self.assertIn("; catches: Lcom/example/TryCatchTest; -> #2", dis)
 

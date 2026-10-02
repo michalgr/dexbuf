@@ -7,6 +7,7 @@ import builtins
 import fnmatch
 import os
 from abc import ABC, abstractmethod
+from bisect import bisect_right
 from collections.abc import Buffer, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -1785,6 +1786,7 @@ class Code:
     """High-level domain model wrapping CodeItem with CFG basic blocks and instruction lookup."""
 
     __slots__ = (
+        "_block_start_pcs",
         "_blocks",
         "_instructions",
         "_item",
@@ -1842,6 +1844,7 @@ class Code:
         self._blocks: tuple[BasicBlock, ...] = self._build_basic_blocks(
             self._instructions, self._pc_map, self._try_catches
         )
+        self._block_start_pcs: tuple[int, ...] = tuple(b.start_pc for b in self._blocks)
 
     @staticmethod
     def _build_basic_blocks(
@@ -1877,13 +1880,20 @@ class Code:
         blocks_list: list[BasicBlock] = []
         block_by_start_pc: dict[int, BasicBlock] = {}
 
+        inst_idx = 0
+        total_insts = len(instructions)
         for idx, start_pc in enumerate(sorted_leaders):
             end_pc = (
                 sorted_leaders[idx + 1]
                 if idx + 1 < len(sorted_leaders)
                 else instructions[-1].next_pc
             )
-            block_insts = [inst for inst in instructions if start_pc <= inst.pc < end_pc]
+            block_insts: list[CodeInstruction] = []
+            while inst_idx < total_insts and instructions[inst_idx].pc < end_pc:
+                if instructions[inst_idx].pc >= start_pc:
+                    block_insts.append(instructions[inst_idx])
+                inst_idx += 1
+
             if not block_insts:
                 continue
             terminator = block_insts[-1]
@@ -1900,14 +1910,18 @@ class Code:
 
         preds_map: dict[int, list[BasicBlock]] = {b.id: [] for b in blocks_list}
         succs_map: dict[int, list[BasicBlock]] = {b.id: [] for b in blocks_list}
+        preds_seen: dict[int, set[int]] = {b.id: set() for b in blocks_list}
+        succs_seen: dict[int, set[int]] = {b.id: set() for b in blocks_list}
 
         for block in blocks_list:
             term = block.terminator
             succ_blocks = [block_by_start_pc[pc] for pc in term.next_pcs if pc in block_by_start_pc]
             for target_block in succ_blocks:
-                if target_block not in succs_map[block.id]:
+                if target_block.id not in succs_seen[block.id]:
+                    succs_seen[block.id].add(target_block.id)
                     succs_map[block.id].append(target_block)
-                if block not in preds_map[target_block.id]:
+                if block.id not in preds_seen[target_block.id]:
+                    preds_seen[target_block.id].add(block.id)
                     preds_map[target_block.id].append(block)
 
         for block in blocks_list:
@@ -1916,21 +1930,31 @@ class Code:
 
         incoming_edges_map: dict[int, list[CatchEdge]] = {b.id: [] for b in blocks_list}
 
+        active_tc: list[TryCatch] = []
+        tc_idx = 0
+        num_tc = len(try_catches)
+
         for block in blocks_list:
+            while tc_idx < num_tc and try_catches[tc_idx].start_pc <= block.start_pc:
+                active_tc.append(try_catches[tc_idx])
+                tc_idx += 1
+
+            if active_tc:
+                active_tc = [tc for tc in active_tc if block.start_pc < tc.end_pc]
+
             catch_edges: list[CatchEdge] = []
-            for tc in try_catches:
-                if tc.covers(block.start_pc):
-                    for handler in tc.handlers:
-                        if handler.target_pc in block_by_start_pc:
-                            target_block = block_by_start_pc[handler.target_pc]
-                            edge = CatchEdge(
-                                source_block=block,
-                                target_block=target_block,
-                                try_catch=tc,
-                                handler=handler,
-                            )
-                            catch_edges.append(edge)
-                            incoming_edges_map[target_block.id].append(edge)
+            for tc in active_tc:
+                for handler in tc.handlers:
+                    if handler.target_pc in block_by_start_pc:
+                        target_block = block_by_start_pc[handler.target_pc]
+                        edge = CatchEdge(
+                            source_block=block,
+                            target_block=target_block,
+                            try_catch=tc,
+                            handler=handler,
+                        )
+                        catch_edges.append(edge)
+                        incoming_edges_map[target_block.id].append(edge)
             block._catch_edges = tuple(catch_edges)
 
         for block in blocks_list:
@@ -2009,7 +2033,9 @@ class Code:
         return self._blocks[0]
 
     def get_block_at(self, pc: int) -> BasicBlock | None:
-        for block in self._blocks:
+        idx = bisect_right(self._block_start_pcs, pc) - 1
+        if idx >= 0:
+            block = self._blocks[idx]
             if block.covers(pc):
                 return block
         return None

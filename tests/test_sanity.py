@@ -44,6 +44,7 @@ class TestSanity(unittest.TestCase):
             "BasicBlock",
             "BranchOffset",
             "CallSiteIdItem",
+            "CatchEdge",
             "CatchHandler",
             "CatchHandlerMap",
             "CentralDirectoryHeader",

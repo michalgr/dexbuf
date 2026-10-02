@@ -8,6 +8,7 @@ import fnmatch
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Buffer, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, Self, TypeIs, runtime_checkable
 
@@ -70,6 +71,7 @@ type ClassLoaderElementInput = ClassLoaderElement | DexFile | VdexFile | ZipArch
 __all__ = [
     "Annotation",
     "BasicBlock",
+    "CatchEdge",
     "CatchHandler",
     "Class",
     "ClassLoader",
@@ -1483,6 +1485,30 @@ class CodeInstruction:
     def raw_instruction(self) -> Instruction:
         return self._insn
 
+    def disassemble(self) -> str:
+        """Format the smali disassembly for this instruction."""
+        parts: list[str] = [f"{self.pc:04x}: {self.mnemonic}"]
+        details: list[str] = []
+        if self.register_names:
+            details.append(", ".join(self.register_names))
+        if self.string_value is not None:
+            details.append(f'"{self.string_value}"')
+        elif self.type_descriptor is not None:
+            details.append(f"{self.type_descriptor}")
+        elif self.target_field_full_descriptor is not None:
+            details.append(f"{self.target_field_full_descriptor}")
+        elif self.target_method_full_descriptor is not None:
+            details.append(f"{self.target_method_full_descriptor}")
+        elif self.literal is not None:
+            details.append(f"#{self.literal}")
+
+        if self.target_pc is not None:
+            details.append(f"# {self.target_pc:04x}")
+
+        if details:
+            parts.append(" " + ", ".join(details))
+        return "".join(parts)
+
     def __repr__(self) -> str:
         return f"<CodeInstruction 0x{self._pc:04x}: {self.mnemonic}>"
 
@@ -1541,6 +1567,22 @@ class CatchHandler:
         return f"<CatchHandler target={target} type={tname!r}>"
 
 
+@dataclass(slots=True, frozen=True)
+class CatchEdge:
+    """Represents an exception handling transition from a protected block to a handler block."""
+
+    handler: CatchHandler
+    target_block: BasicBlock
+
+    @property
+    def type_descriptor(self) -> Descriptor | None:
+        return self.handler.type_descriptor
+
+    @property
+    def is_catch_all(self) -> bool:
+        return self.handler.is_catch_all
+
+
 class TryCatch:
     """Represents a try block and its associated catch handlers in a method."""
 
@@ -1579,11 +1621,14 @@ class BasicBlock:
     """Represents a basic block in the control flow graph (CFG)."""
 
     __slots__ = (
+        "_catch_edges",
         "_end_pc",
         "_exception_handlers",
+        "_handled_catches",
         "_id",
         "_instructions",
         "_predecessors",
+        "_protected_blocks",
         "_start_pc",
         "_successors",
         "_terminator",
@@ -1606,6 +1651,29 @@ class BasicBlock:
         self._exception_handlers: tuple[CatchHandler, ...] = exception_handlers
         self._predecessors: tuple[BasicBlock, ...] = ()
         self._successors: tuple[BasicBlock, ...] = ()
+        self._catch_edges: tuple[CatchEdge, ...] = ()
+        self._handled_catches: tuple[CatchHandler, ...] = ()
+        self._protected_blocks: tuple[BasicBlock, ...] = ()
+
+    @property
+    def catch_edges(self) -> tuple[CatchEdge, ...]:
+        return self._catch_edges
+
+    @property
+    def exception_successors(self) -> tuple[BasicBlock, ...]:
+        return tuple(edge.target_block for edge in self._catch_edges)
+
+    @property
+    def is_catch_handler(self) -> bool:
+        return bool(self._handled_catches)
+
+    @property
+    def handled_catches(self) -> tuple[CatchHandler, ...]:
+        return self._handled_catches
+
+    @property
+    def protected_blocks(self) -> tuple[BasicBlock, ...]:
+        return self._protected_blocks
 
     @property
     def id(self) -> int:
@@ -1646,6 +1714,39 @@ class BasicBlock:
     @property
     def is_exit(self) -> bool:
         return len(self._successors) == 0 or self._terminator.is_return or self._terminator.is_throw
+
+    def disassemble(self) -> str:
+        """Format the smali disassembly for this basic block."""
+        lines: list[str] = [f"  [Block #{self._id}]"]
+
+        preds_str = ", ".join(f"#{p.id}" for p in self._predecessors) or "none"
+        succs_str = ", ".join(f"#{s.id}" for s in self._successors) or "none"
+        lines.append(f"    ; preds: {preds_str}")
+        lines.append(f"    ; succs: {succs_str}")
+
+        if self.is_catch_handler:
+            types = [
+                h.type_descriptor if h.type_descriptor is not None else "catch-all"
+                for h in self._handled_catches
+            ]
+            # preserve order, unique
+            unique_types = list(dict.fromkeys(types))
+            lines.append(f"    ; handler for: {', '.join(unique_types)}")
+
+        if self.catch_edges:
+            catches_parts: list[str] = []
+            for edge in self._catch_edges:
+                htype = edge.type_descriptor if edge.type_descriptor is not None else "catch-all"
+                entry = f"{htype} -> #{edge.target_block.id}"
+                if entry not in catches_parts:
+                    catches_parts.append(entry)
+            if catches_parts:
+                lines.append(f"    ; catches: {', '.join(catches_parts)}")
+
+        for inst in self._instructions:
+            lines.append(f"    {inst.disassemble()}")
+
+        return "\n".join(lines)
 
     def covers(self, pc: int) -> bool:
         return self._start_pc <= pc < self._end_pc
@@ -1804,6 +1905,29 @@ class Code:
             block._predecessors = tuple(preds_map[block.id])
             block._successors = tuple(succs_map[block.id])
 
+        for block in blocks_list:
+            catch_edges: list[CatchEdge] = []
+            for handler in block.exception_handlers:
+                if handler.target_pc in block_by_start_pc:
+                    target_block = block_by_start_pc[handler.target_pc]
+                    catch_edges.append(CatchEdge(handler=handler, target_block=target_block))
+            block._catch_edges = tuple(catch_edges)
+
+        handled_catches_map: dict[int, list[CatchHandler]] = {b.id: [] for b in blocks_list}
+        protected_blocks_map: dict[int, list[BasicBlock]] = {b.id: [] for b in blocks_list}
+
+        for block in blocks_list:
+            for edge in block.catch_edges:
+                target_id = edge.target_block.id
+                if edge.handler not in handled_catches_map[target_id]:
+                    handled_catches_map[target_id].append(edge.handler)
+                if block not in protected_blocks_map[target_id]:
+                    protected_blocks_map[target_id].append(block)
+
+        for block in blocks_list:
+            block._handled_catches = tuple(handled_catches_map[block.id])
+            block._protected_blocks = tuple(protected_blocks_map[block.id])
+
         return tuple(blocks_list)
 
     @property
@@ -1900,29 +2024,7 @@ class Code:
             f"  .registers {self.registers_size}",
         ]
         for block in self._blocks:
-            lines.append(f"  [Block #{block.id}]")
-            for inst in block.instructions:
-                parts: list[str] = [f"    {inst.pc:04x}: {inst.mnemonic}"]
-                details: list[str] = []
-                if inst.register_names:
-                    details.append(", ".join(inst.register_names))
-                if inst.string_value is not None:
-                    details.append(f'"{inst.string_value}"')
-                elif inst.type_descriptor is not None:
-                    details.append(f"{inst.type_descriptor}")
-                elif inst.target_field_full_descriptor is not None:
-                    details.append(f"{inst.target_field_full_descriptor}")
-                elif inst.target_method_full_descriptor is not None:
-                    details.append(f"{inst.target_method_full_descriptor}")
-                elif inst.literal is not None:
-                    details.append(f"#{inst.literal}")
-
-                if inst.target_pc is not None:
-                    details.append(f"# {inst.target_pc:04x}")
-
-                if details:
-                    parts.append(" " + ", ".join(details))
-                lines.append("".join(parts))
+            lines.append(block.disassemble())
         return "\n".join(lines)
 
     def __repr__(self) -> str:

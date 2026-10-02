@@ -2501,6 +2501,138 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         self.assertIn("sget v0, Lcom/example/TargetTest;->TAG:Ljava/lang/String;", dis)
         self.assertIn("invoke-static-range v0, Lcom/example/TargetTest;->helper(I)V", dis)
 
+    def test_code_instruction_disassemble_forms(self) -> None:
+        from dexbuf.instructions import Const4, ConstString, Goto, ReturnVoid
+        from dexbuf.items import StringIdItem
+        from dexbuf.types import BranchOffset, Idx, Literal, Reg
+
+        c_str = ConstString(a=Reg(0), b=Idx[StringIdItem](0)).to_bytes()
+        c_4 = Const4(a=Reg(1), b=Literal(1)).to_bytes()
+        g_to = Goto(a=BranchOffset(2)).to_bytes()
+        r_void = ReturnVoid().to_bytes()
+
+        code_bytes = c_str + c_4 + g_to + r_void + r_void
+
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/InstDisasm;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "direct_methods": [
+                        {
+                            "name": "test",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": 1,
+                            "code": code_bytes,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        m = loader["com.example.InstDisasm"].get_method("test")
+        assert m is not None and m.code is not None
+
+        # String instruction
+        inst0 = m.code.at(0)
+        self.assertEqual(inst0.disassemble(), '0000: const-string v0, "Lcom/example/InstDisasm;"')
+
+        # Literal instruction
+        inst2 = m.code.at(2)
+        self.assertEqual(inst2.disassemble(), "0002: const-4 p0, #1")
+
+        # Branch instruction with target_pc
+        inst3 = m.code.at(3)
+        self.assertEqual(inst3.disassemble(), "0003: goto # 0005")
+
+        # Return void instruction
+        inst5 = m.code.at(5)
+        self.assertEqual(inst5.disassemble(), "0005: return-void")
+
+    def test_exception_edges_and_handlers(self) -> None:
+        from dexbuf import CatchEdge, CatchHandler
+
+        # Build full code item with try/catch blocks using raw bytes
+        # Try item covering PC 0000..0002 with handler at PC 0003
+        # PC 0000: const/4 v0, #0
+        # PC 0001: return-void
+        # PC 0002: const/4 v0, #1
+        # PC 0003: move-exception v0
+        # PC 0004: return-void
+        insns = b"\x12\x00\x0e\x00\x12\x10\x0d\x00\x0e\x00"
+
+        # CodeItem header (16 bytes):
+        # registers_size=2, ins_size=0, outs_size=0, tries_size=1, debug_info_off=0, insns_size=5
+        header = struct.pack("<4H2I", 2, 0, 0, 1, 0, 5)
+        # padding to 4 bytes offset: 16 + 10 = 26 -> 2 bytes padding to 28
+        padding = b"\x00\x00"
+        # TryItem (8 bytes): start_addr=0, insn_count=2, handler_off=1
+        try_item = struct.pack("<IHH", 0, 2, 1)
+        # CatchHandlerList:
+        # encoded_catch_handler_list size = 1 (ULEB128 0x01)
+        # handler at offset 1:
+        # size = 1 (ULEB128 0x01) -> 1 typed handler
+        # handler pair: type_idx=0 (ULEB128 0x00), addr=3 (ULEB128 0x03)
+        # catch_all_addr: none (since size > 0 and no catch all)
+        handlers = b"\x01\x01\x00\x03"
+
+        full_code_bytes = header + insns + padding + try_item + handlers
+
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/TryCatchTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "direct_methods": [
+                        {
+                            "name": "run",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": 1,
+                            "code": full_code_bytes,
+                            "is_full_code_item": True,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        m = loader["com.example.TryCatchTest"].get_method("run")
+        assert m is not None and m.code is not None
+        code = m.code
+
+        # Basic blocks:
+        # Block #0 [0..2] - protected block
+        # Block #1 [2..3]
+        # Block #2 [3..5] - catch handler block
+        self.assertGreaterEqual(len(code.blocks), 3)
+
+        block0 = code.get_block_at(0)
+        assert block0 is not None
+        self.assertEqual(len(block0.catch_edges), 1)
+
+        edge = block0.catch_edges[0]
+        self.assertIsInstance(edge, CatchEdge)
+        self.assertIsInstance(edge.handler, CatchHandler)
+        self.assertEqual(edge.target_block.start_pc, 3)
+        self.assertEqual(block0.exception_successors, (edge.target_block,))
+
+        handler_block = block0.exception_successors[0]
+        self.assertTrue(handler_block.is_catch_handler)
+        self.assertEqual(len(handler_block.handled_catches), 1)
+        self.assertEqual(handler_block.handled_catches[0], edge.handler)
+        self.assertEqual(handler_block.protected_blocks, (block0,))
+
+        # Block disassembly formatting check with CFG comments
+        dis = code.disassemble()
+        self.assertIn("; preds:", dis)
+        self.assertIn("; succs:", dis)
+        self.assertIn("; handler for:", dis)
+        self.assertIn("; catches:", dis)
+
 
 if __name__ == "__main__":
     unittest.main()

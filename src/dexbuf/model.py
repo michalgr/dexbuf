@@ -390,6 +390,14 @@ class Method:
                 return ann
         return None
 
+    def disassemble(self) -> str:
+        """Format the smali disassembly for this method."""
+        if self.has_code and self.code is not None:
+            return self.code.disassemble()
+        mflags = format_method_flags(self.access_flags)
+        mhead = f".method {mflags} " if mflags else ".method "
+        return f"{mhead}{self.name}{self.descriptor}"
+
     def __repr__(self) -> str:
         return f"<Method '{self._cls.name}.{self.name}{self.descriptor}'>"
 
@@ -522,6 +530,15 @@ class Field:
             if ann.type_descriptor == desc:
                 return ann
         return None
+
+    def disassemble(self) -> str:
+        """Format the smali disassembly directive for this field."""
+        fflags = format_field_flags(self.access_flags)
+        fhead = f".field {fflags} " if fflags else ".field "
+        fval = ""
+        if self.initial_value is not None:
+            fval = f" = {self.initial_value.value}"
+        return f"{fhead}{self.name}:{self.type_descriptor}{fval}"
 
     def __repr__(self) -> str:
         return f"<Field '{self._cls.name}.{self.name}: {self.type_name}'>"
@@ -940,20 +957,10 @@ class ResolvedClass(Class):
             lines.append(f".implements {iface.descriptor}")
 
         for field in self.fields:
-            fflags = format_field_flags(field.access_flags)
-            fhead = f".field {fflags} " if fflags else ".field "
-            fval = ""
-            if field.initial_value is not None:
-                fval = f" = {field.initial_value.value}"
-            lines.append(f"{fhead}{field.name}:{field.type_descriptor}{fval}")
+            lines.append(field.disassemble())
 
         for method in self.methods:
-            if method.has_code and method.code is not None:
-                lines.append(method.code.disassemble())
-            else:
-                mflags = format_method_flags(method.access_flags)
-                mhead = f".method {mflags} " if mflags else ".method "
-                lines.append(f"{mhead}{method.name}{method.descriptor}")
+            lines.append(method.disassemble())
 
         return "\n".join(lines)
 

@@ -2358,6 +2358,84 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         succ_start_pcs = [b.start_pc for b in block0.successors]
         self.assertEqual(succ_start_pcs, [4])
 
+    def test_field_and_method_disassemble(self) -> None:
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/DisasmTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": int(AccessFlags.PUBLIC),
+                    "static_fields": [
+                        {
+                            "name": "TAG",
+                            "type": "Ljava/lang/String;",
+                            "access_flags": int(
+                                AccessFlags.PUBLIC | AccessFlags.STATIC | AccessFlags.FINAL
+                            ),
+                            "value": EncodedValue(
+                                value_arg=0, value_type=ValueType.STRING, value="MyTag"
+                            ),
+                        }
+                    ],
+                    "instance_fields": [
+                        {
+                            "name": "counter",
+                            "type": "I",
+                            "access_flags": int(AccessFlags.PRIVATE),
+                        }
+                    ],
+                    "direct_methods": [
+                        {
+                            "name": "<init>",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": int(AccessFlags.PUBLIC | AccessFlags.CONSTRUCTOR),
+                            "code": b"\x0e\x00",  # return-void
+                        }
+                    ],
+                    "virtual_methods": [
+                        {
+                            "name": "abstractMethod",
+                            "return_type": "I",
+                            "params": [],
+                            "access_flags": int(AccessFlags.PUBLIC | AccessFlags.ABSTRACT),
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        cls = loader["com.example.DisasmTest"]
+
+        f_tag = cls.get_field("TAG")
+        self.assertIsNotNone(f_tag)
+        assert f_tag is not None
+        self.assertEqual(
+            f_tag.disassemble(),
+            ".field public static final TAG:Ljava/lang/String; = 5",
+        )
+
+        f_counter = cls.get_field("counter")
+        self.assertIsNotNone(f_counter)
+        assert f_counter is not None
+        self.assertEqual(f_counter.disassemble(), ".field private counter:I")
+
+        m_init = cls.get_method("<init>")
+        self.assertIsNotNone(m_init)
+        assert m_init is not None
+        m_init_dis = m_init.disassemble()
+        self.assertTrue(m_init_dis.startswith(".method public constructor <init>()V"))
+        self.assertIn(".registers", m_init_dis)
+        self.assertIn("return-void", m_init_dis)
+
+        m_abstract = cls.get_method("abstractMethod")
+        self.assertIsNotNone(m_abstract)
+        assert m_abstract is not None
+        self.assertEqual(
+            m_abstract.disassemble(),
+            ".method public abstract abstractMethod()I",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

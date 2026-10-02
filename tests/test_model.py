@@ -2649,6 +2649,77 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         self.assertIn("; handler for: Lcom/example/TryCatchTest;", dis)
         self.assertIn("; catches: Lcom/example/TryCatchTest; -> #2", dis)
 
+    def test_get_block_at_binary_search_and_boundaries(self) -> None:
+        # const-string v0, "Hello" (op=0x1a, 2 code units: PC 0..2)
+        # const/4 v1, #1          (op=0x12, 1 code unit:  PC 2..3)
+        # if-eqz v1, +4           (op=0x38, 2 code units: PC 3..5, branch target PC 7)
+        # return-void             (op=0x0e, 1 code unit:  PC 5..6)
+        # const/4 v0, #2          (op=0x12, 1 code unit:  PC 6..7)
+        # return-void             (op=0x0e, 1 code unit:  PC 7..8)
+        code_bytes = (
+            b"\x1a\x00\x00\x00"  # 0000..0002
+            b"\x12\x10"  # 0002..0003
+            b"\x38\x01\x04\x00"  # 0003..0005 (target 0007)
+            b"\x0e\x00"  # 0005..0006
+            b"\x12\x20"  # 0006..0007
+            b"\x0e\x00"  # 0007..0008
+        )
+
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/GetBlockAtTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "direct_methods": [
+                        {
+                            "name": "testMethod",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": 1,
+                            "code": code_bytes,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        m = loader["com.example.GetBlockAtTest"].get_method("testMethod")
+        assert m is not None and m.code is not None
+        code = m.code
+
+        # Verify block partitioning:
+        # Leaders: 0 (entry), 5 (if-eqz fallthrough), 6 (return-void follower), 7 (if-eqz target)
+        # Block #0: PC 0..5
+        # Block #1: PC 5..6
+        # Block #2: PC 6..7
+        # Block #3: PC 7..8
+        self.assertEqual(len(code.blocks), 4)
+        b0, b1, b2, b3 = code.blocks
+        self.assertEqual((b0.start_pc, b0.end_pc), (0, 5))
+        self.assertEqual((b1.start_pc, b1.end_pc), (5, 6))
+        self.assertEqual((b2.start_pc, b2.end_pc), (6, 7))
+        self.assertEqual((b3.start_pc, b3.end_pc), (7, 8))
+
+        # Boundary checks for Block #0 [0..5)
+        self.assertIs(code.get_block_at(0), b0)  # start_pc
+        self.assertIs(code.get_block_at(2), b0)  # middle PC (start of instruction)
+        self.assertIs(code.get_block_at(4), b0)  # end_pc - 1
+
+        # Boundary checks for Block #1 [5..6)
+        self.assertIs(code.get_block_at(5), b1)  # start_pc and end_pc - 1
+
+        # Boundary checks for Block #2 [6..7)
+        self.assertIs(code.get_block_at(6), b2)  # start_pc and end_pc - 1
+
+        # Boundary checks for Block #3 [7..8)
+        self.assertIs(code.get_block_at(7), b3)  # start_pc and end_pc - 1
+
+        # Out-of-bounds checks
+        self.assertIsNone(code.get_block_at(-1))  # negative PC
+        self.assertIsNone(code.get_block_at(8))  # at method end PC
+        self.assertIsNone(code.get_block_at(100))  # far out-of-bounds PC
+
 
 if __name__ == "__main__":
     unittest.main()

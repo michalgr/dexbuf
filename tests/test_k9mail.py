@@ -285,6 +285,23 @@ class TestK9MailIntegration(unittest.TestCase):
             self.assertEqual(dump, expected_dump)
             self.assertEqual(len(dump.splitlines()), 64)
 
+    def test_disassemble_smtp_data_stuffing_class_full_dump(self) -> None:
+        """Verify full disassembly dump of SmtpDataStuffing matches golden snapshot."""
+        from pathlib import Path
+
+        fixture_path = (
+            Path(__file__).parent / "fixtures" / "k9_smtp_data_stuffing_disassembly.smali"
+        )
+        self.assertTrue(fixture_path.exists(), f"Fixture file not found: {fixture_path}")
+        expected_dump = fixture_path.read_text(encoding="utf-8").strip()
+
+        with dexbuf.open(self.apk_path) as loader:
+            stuffing_cls = loader["com.fsck.k9.mail.filter.SmtpDataStuffing"]
+            dump = stuffing_cls.disassemble()
+
+            self.assertEqual(dump, expected_dump)
+            self.assertEqual(len(dump.splitlines()), 55)
+
 
 if __name__ == "__main__":
     unittest.main()

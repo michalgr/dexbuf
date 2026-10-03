@@ -1790,8 +1790,6 @@ class Code:
         "_instructions",
         "_item",
         "_method",
-        "_payload_map",
-        "_payloads",
         "_pc_map",
         "_try_catches",
     )
@@ -1802,8 +1800,6 @@ class Code:
         (
             self._instructions,
             self._pc_map,
-            self._payloads,
-            self._payload_map,
         ) = self._parse_instructions_and_payloads(item, method)
         self._try_catches: tuple[TryCatch, ...] = self._parse_try_catches(item, method)
         self._blocks: tuple[BasicBlock, ...] = self._build_basic_blocks(
@@ -1813,12 +1809,7 @@ class Code:
     @staticmethod
     def _parse_instructions_and_payloads(
         item: CodeItem, method: Method
-    ) -> tuple[
-        tuple[CodeInstruction, ...],
-        dict[int, CodeInstruction],
-        tuple[Payload, ...],
-        dict[int, Payload],
-    ]:
+    ) -> tuple[tuple[CodeInstruction, ...], dict[int, CodeInstruction]]:
         instructions: list[CodeInstruction] = []
         payload_map: dict[int, Payload] = {}
         cursor_pc = 0
@@ -1837,7 +1828,7 @@ class Code:
                 inst._payload = payload_map[inst.target_pc]
 
         pc_map = {inst.pc: inst for inst in instructions}
-        return tuple(instructions), pc_map, tuple(payload_map.values()), payload_map
+        return tuple(instructions), pc_map
 
     @staticmethod
     def _parse_try_catches(item: CodeItem, method: Method) -> tuple[TryCatch, ...]:
@@ -2035,13 +2026,6 @@ class Code:
     @property
     def instructions(self) -> tuple[CodeInstruction, ...]:
         return self._instructions
-
-    @property
-    def payloads(self) -> tuple[Payload, ...]:
-        return self._payloads
-
-    def get_payload(self, pc: int, default: Payload | None = None) -> Payload | None:
-        return self._payload_map.get(pc, default)
 
     def at(self, pc: int) -> CodeInstruction:
         inst = self._pc_map.get(pc)

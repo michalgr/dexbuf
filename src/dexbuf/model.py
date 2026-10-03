@@ -1797,16 +1797,15 @@ class Code:
         "_blocks",
         "_item",
         "_method",
-        "_try_catches",
     )
 
     def __init__(self, method: Method, item: CodeItem) -> None:
         self._method: Method = method
         self._item: CodeItem = item
-        self._try_catches: tuple[TryCatch, ...] = self._parse_try_catches(item, method)
+        try_catches: tuple[TryCatch, ...] = self._parse_try_catches(item, method)
         instructions, pc_map = self._parse_instructions_and_payloads(item, method)
         self._blocks: tuple[BasicBlock, ...] = self._build_basic_blocks(
-            instructions, pc_map, self._try_catches
+            instructions, pc_map, try_catches
         )
 
     @staticmethod
@@ -2064,16 +2063,6 @@ class Code:
             block = self._blocks[idx]
             if block.covers(pc):
                 return block
-        return None
-
-    @property
-    def try_catches(self) -> tuple[TryCatch, ...]:
-        return self._try_catches
-
-    def find_try_catch(self, pc: int) -> TryCatch | None:
-        for tc in self._try_catches:
-            if tc.covers(pc):
-                return tc
         return None
 
     def disassemble(self) -> str:

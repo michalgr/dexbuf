@@ -1799,60 +1799,71 @@ class Code:
     def __init__(self, method: Method, item: CodeItem) -> None:
         self._method: Method = method
         self._item: CodeItem = item
+        (
+            self._instructions,
+            self._pc_map,
+            self._payloads,
+            self._payload_map,
+        ) = self._parse_instructions_and_payloads(item, method)
+        self._try_catches: tuple[TryCatch, ...] = self._parse_try_catches(item, method)
+        self._blocks: tuple[BasicBlock, ...] = self._build_basic_blocks(
+            self._instructions, self._pc_map, self._try_catches
+        )
 
-        # Parse instructions and payloads
+    @staticmethod
+    def _parse_instructions_and_payloads(
+        item: CodeItem, method: Method
+    ) -> tuple[
+        tuple[CodeInstruction, ...],
+        dict[int, CodeInstruction],
+        tuple[Payload, ...],
+        dict[int, Payload],
+    ]:
         instructions: list[CodeInstruction] = []
         payload_map: dict[int, Payload] = {}
         cursor_pc = 0
         for iop in item.insns:
             next_pc = cursor_pc + iop.code_units
             if isinstance(iop, Instruction):
-                inst = CodeInstruction(method, cursor_pc, iop, next_pc)
-                instructions.append(inst)
+                instructions.append(CodeInstruction(method, cursor_pc, iop, next_pc))
             else:
                 payload_map[cursor_pc] = iop
             cursor_pc = next_pc
 
         for inst in instructions:
-            if inst.is_switch or inst.opcode == Opcode.FILL_ARRAY_DATA:
-                if inst.target_pc is not None and inst.target_pc in payload_map:
-                    inst._payload = payload_map[inst.target_pc]
+            if (
+                inst.is_switch or inst.opcode == Opcode.FILL_ARRAY_DATA
+            ) and inst.target_pc in payload_map:
+                inst._payload = payload_map[inst.target_pc]
 
-        self._instructions: tuple[CodeInstruction, ...] = tuple(instructions)
-        self._pc_map: dict[int, CodeInstruction] = {inst.pc: inst for inst in instructions}
-        self._payloads: tuple[Payload, ...] = tuple(payload_map.values())
-        self._payload_map: dict[int, Payload] = payload_map
-
-        # Parse TryCatches
-        tc_list: list[TryCatch] = []
-        if item.tries_size > 0 and item.handlers is not None:
-            for try_item in item.tries:
-                encoded_handler = item.get_catch_handler(try_item)
-                handlers_list: list[CatchHandler] = []
-                for pair in encoded_handler.handlers:
-                    handlers_list.append(CatchHandler(method.defining_class, pair.addr, pair))
-                if encoded_handler.catches_all and encoded_handler.catch_all_addr is not None:
-                    handlers_list.append(
-                        CatchHandler(method.defining_class, encoded_handler.catch_all_addr, None)
-                    )
-                tc_list.append(TryCatch(try_item, tuple(handlers_list)))
-
-        self._try_catches: tuple[TryCatch, ...] = tuple(tc_list)
-
-        # Build CFG Basic Blocks
-        self._blocks: tuple[BasicBlock, ...] = self._build_basic_blocks(
-            self._instructions, self._pc_map, self._try_catches
-        )
+        pc_map = {inst.pc: inst for inst in instructions}
+        return tuple(instructions), pc_map, tuple(payload_map.values()), payload_map
 
     @staticmethod
-    def _build_basic_blocks(
+    def _parse_try_catches(item: CodeItem, method: Method) -> tuple[TryCatch, ...]:
+        if item.tries_size == 0 or item.handlers is None:
+            return ()
+
+        tc_list: list[TryCatch] = []
+        for try_item in item.tries:
+            encoded_handler = item.get_catch_handler(try_item)
+            handlers_list: list[CatchHandler] = [
+                CatchHandler(method.defining_class, pair.addr, pair)
+                for pair in encoded_handler.handlers
+            ]
+            if encoded_handler.catches_all and encoded_handler.catch_all_addr is not None:
+                handlers_list.append(
+                    CatchHandler(method.defining_class, encoded_handler.catch_all_addr, None)
+                )
+            tc_list.append(TryCatch(try_item, tuple(handlers_list)))
+        return tuple(tc_list)
+
+    @staticmethod
+    def _find_leaders(
         instructions: tuple[CodeInstruction, ...],
         pc_map: dict[int, CodeInstruction],
         try_catches: tuple[TryCatch, ...],
-    ) -> tuple[BasicBlock, ...]:
-        if not instructions:
-            return ()
-
+    ) -> list[int]:
         leaders: set[int] = {0}
         for inst in instructions:
             if inst.is_conditional_branch or inst.is_unconditional_branch or inst.is_switch:
@@ -1861,9 +1872,8 @@ class Code:
                         leaders.add(pc)
                 if inst.is_unconditional_branch and inst.next_pc in pc_map:
                     leaders.add(inst.next_pc)
-            elif inst.is_return or inst.is_throw:
-                if inst.next_pc in pc_map:
-                    leaders.add(inst.next_pc)
+            elif (inst.is_return or inst.is_throw) and inst.next_pc in pc_map:
+                leaders.add(inst.next_pc)
 
         for tc in try_catches:
             if tc.start_pc in pc_map:
@@ -1874,12 +1884,18 @@ class Code:
                 if handler.target_pc in pc_map:
                     leaders.add(handler.target_pc)
 
-        sorted_leaders = sorted(leaders)
+        return sorted(leaders)
+
+    @staticmethod
+    def _partition_blocks(
+        instructions: tuple[CodeInstruction, ...],
+        sorted_leaders: list[int],
+    ) -> tuple[list[BasicBlock], dict[int, BasicBlock]]:
         blocks_list: list[BasicBlock] = []
         block_by_start_pc: dict[int, BasicBlock] = {}
-
         inst_idx = 0
         total_insts = len(instructions)
+
         for idx, start_pc in enumerate(sorted_leaders):
             end_pc = (
                 sorted_leaders[idx + 1]
@@ -1894,26 +1910,33 @@ class Code:
 
             if not block_insts:
                 continue
-            terminator = block_insts[-1]
 
             block = BasicBlock(
                 id=len(blocks_list),
                 start_pc=start_pc,
                 end_pc=end_pc,
                 instructions=tuple(block_insts),
-                terminator=terminator,
+                terminator=block_insts[-1],
             )
             blocks_list.append(block)
             block_by_start_pc[start_pc] = block
 
+        return blocks_list, block_by_start_pc
+
+    @staticmethod
+    def _wire_control_flow(
+        blocks_list: list[BasicBlock],
+        block_by_start_pc: dict[int, BasicBlock],
+    ) -> None:
         preds_map: dict[int, list[BasicBlock]] = {b.id: [] for b in blocks_list}
         succs_map: dict[int, list[BasicBlock]] = {b.id: [] for b in blocks_list}
         preds_seen: dict[int, set[int]] = {b.id: set() for b in blocks_list}
         succs_seen: dict[int, set[int]] = {b.id: set() for b in blocks_list}
 
         for block in blocks_list:
-            term = block.terminator
-            succ_blocks = [block_by_start_pc[pc] for pc in term.next_pcs if pc in block_by_start_pc]
+            succ_blocks = [
+                block_by_start_pc[pc] for pc in block.terminator.next_pcs if pc in block_by_start_pc
+            ]
             for target_block in succ_blocks:
                 if target_block.id not in succs_seen[block.id]:
                     succs_seen[block.id].add(target_block.id)
@@ -1926,8 +1949,13 @@ class Code:
             block._predecessors = tuple(preds_map[block.id])
             block._successors = tuple(succs_map[block.id])
 
+    @staticmethod
+    def _wire_exception_edges(
+        blocks_list: list[BasicBlock],
+        block_by_start_pc: dict[int, BasicBlock],
+        try_catches: tuple[TryCatch, ...],
+    ) -> None:
         incoming_edges_map: dict[int, list[CatchEdge]] = {b.id: [] for b in blocks_list}
-
         active_tc: list[TryCatch] = []
         tc_idx = 0
         num_tc = len(try_catches)
@@ -1958,6 +1986,19 @@ class Code:
         for block in blocks_list:
             block._incoming_catch_edges = tuple(incoming_edges_map[block.id])
 
+    @staticmethod
+    def _build_basic_blocks(
+        instructions: tuple[CodeInstruction, ...],
+        pc_map: dict[int, CodeInstruction],
+        try_catches: tuple[TryCatch, ...],
+    ) -> tuple[BasicBlock, ...]:
+        if not instructions:
+            return ()
+
+        sorted_leaders = Code._find_leaders(instructions, pc_map, try_catches)
+        blocks_list, block_by_start_pc = Code._partition_blocks(instructions, sorted_leaders)
+        Code._wire_control_flow(blocks_list, block_by_start_pc)
+        Code._wire_exception_edges(blocks_list, block_by_start_pc, try_catches)
         return tuple(blocks_list)
 
     @property

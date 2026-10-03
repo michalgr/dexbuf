@@ -2606,15 +2606,21 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         assert block0 is not None
         self.assertEqual(len(block0.catch_edges), 1)
 
+        from dexbuf import TryCatch
+
         edge = block0.catch_edges[0]
         self.assertIsInstance(edge, CatchEdge)
         self.assertIsInstance(edge.handler, CatchHandler)
         self.assertIs(edge.source_block, block0)
         self.assertEqual(edge.target_block.start_pc, 3)
-        self.assertEqual(len(code.try_catches), 1)
-        self.assertIs(edge.try_catch, code.try_catches[0])
+        self.assertIsInstance(edge.try_catch, TryCatch)
+        self.assertEqual(edge.try_catch.start_pc, 0)
+        self.assertEqual(edge.try_catch.end_pc, 2)
         self.assertEqual(edge.target_pc, 3)
         self.assertEqual(edge.type_name, "com.example.TryCatchTest")
+
+        self.assertFalse(hasattr(code, "try_catches"))
+        self.assertFalse(hasattr(code, "find_try_catch"))
 
         self.assertEqual(block0.exception_successors, (edge.target_block,))
         self.assertEqual(block0.exception_handlers, (edge.handler,))

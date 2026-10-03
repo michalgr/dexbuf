@@ -1764,6 +1764,14 @@ class BasicBlock:
 
         return "\n".join(lines)
 
+    def get(self, pc: int, default: CodeInstruction | None = None) -> CodeInstruction | None:
+        idx = bisect_right(self._instructions, pc, key=lambda inst: inst._pc) - 1
+        if idx >= 0:
+            inst = self._instructions[idx]
+            if inst._pc == pc:
+                return inst
+        return default
+
     def covers(self, pc: int) -> bool:
         return self._start_pc <= pc < self._end_pc
 
@@ -1787,23 +1795,18 @@ class Code:
 
     __slots__ = (
         "_blocks",
-        "_instructions",
         "_item",
         "_method",
-        "_pc_map",
         "_try_catches",
     )
 
     def __init__(self, method: Method, item: CodeItem) -> None:
         self._method: Method = method
         self._item: CodeItem = item
-        (
-            self._instructions,
-            self._pc_map,
-        ) = self._parse_instructions_and_payloads(item, method)
         self._try_catches: tuple[TryCatch, ...] = self._parse_try_catches(item, method)
+        instructions, pc_map = self._parse_instructions_and_payloads(item, method)
         self._blocks: tuple[BasicBlock, ...] = self._build_basic_blocks(
-            self._instructions, self._pc_map, self._try_catches
+            instructions, pc_map, self._try_catches
         )
 
     @staticmethod
@@ -2023,29 +2026,29 @@ class Code:
             return f"v{reg_int}"
         return f"p{reg_int - locals_sz}"
 
-    @property
-    def instructions(self) -> tuple[CodeInstruction, ...]:
-        return self._instructions
-
     def at(self, pc: int) -> CodeInstruction:
-        inst = self._pc_map.get(pc)
+        inst = self.get(pc)
         if inst is None:
             raise KeyError(f"No instruction at program counter {pc}")
         return inst
 
     def get(self, pc: int, default: CodeInstruction | None = None) -> CodeInstruction | None:
-        return self._pc_map.get(pc, default)
+        block = self.get_block_at(pc)
+        if block is not None:
+            return block.get(pc, default)
+        return default
 
     def __contains__(self, pc: object) -> bool:
         if isinstance(pc, int):
-            return pc in self._pc_map
+            return self.get(pc) is not None
         return False
 
     def __iter__(self) -> Iterator[CodeInstruction]:
-        return iter(self._instructions)
+        for block in self._blocks:
+            yield from block._instructions
 
     def __len__(self) -> int:
-        return len(self._instructions)
+        return sum(len(b) for b in self._blocks)
 
     @property
     def blocks(self) -> tuple[BasicBlock, ...]:
@@ -2086,4 +2089,4 @@ class Code:
 
     def __repr__(self) -> str:
         mname = f"{self._method.defining_class.name}.{self._method.name}"
-        return f"<Code {mname!r} insns={len(self._instructions)} blocks={len(self._blocks)}>"
+        return f"<Code {mname!r} insns={len(self)} blocks={len(self._blocks)}>"

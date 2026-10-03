@@ -2229,9 +2229,7 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         code = m.code
 
         # Verify instructions contains zero payloads
-        self.assertTrue(
-            all(not isinstance(inst.raw, PackedSwitchPayload) for inst in code.instructions)
-        )
+        self.assertTrue(all(not isinstance(inst.raw, PackedSwitchPayload) for inst in code))
 
         # Verify CodeInstruction.payload linking on referring switch instruction
         sw_code_inst = code.at(0)
@@ -2713,6 +2711,94 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         self.assertIsNone(code.get_block_at(-1))  # negative PC
         self.assertIsNone(code.get_block_at(8))  # at method end PC
         self.assertIsNone(code.get_block_at(100))  # far out-of-bounds PC
+
+    def test_code_delegation_and_basicblock_get(self) -> None:
+        # const-string v0, "Hello" (2 code units: PC 0..2)
+        # const/4 v1, #1          (1 code unit:  PC 2..3)
+        # if-eqz v1, +4           (2 code units: PC 3..5, branch target PC 7)
+        # return-void             (1 code unit:  PC 5..6)
+        # const/4 v0, #2          (1 code unit:  PC 6..7)
+        # return-void             (1 code unit:  PC 7..8)
+        code_bytes = (
+            b"\x1a\x00\x00\x00"  # 0000..0002
+            b"\x12\x10"  # 0002..0003
+            b"\x38\x01\x04\x00"  # 0003..0005 (target 0007)
+            b"\x0e\x00"  # 0005..0006
+            b"\x12\x20"  # 0006..0007
+            b"\x0e\x00"  # 0007..0008
+        )
+
+        dex_bytes = build_dex_bytes(
+            [
+                {
+                    "name": "Lcom/example/CodeDelegationTest;",
+                    "super": "Ljava/lang/Object;",
+                    "access_flags": 1,
+                    "direct_methods": [
+                        {
+                            "name": "testMethod",
+                            "return_type": "V",
+                            "params": [],
+                            "access_flags": 1,
+                            "code": code_bytes,
+                        }
+                    ],
+                }
+            ]
+        )
+        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
+        m = loader["com.example.CodeDelegationTest"].get_method("testMethod")
+        assert m is not None and m.code is not None
+        code = m.code
+
+        # Verify instructions property does not exist on Code
+        self.assertFalse(hasattr(code, "instructions"))
+
+        # Iteration across block boundaries in execution order
+        insts = list(code)
+        self.assertEqual(len(insts), 6)
+        self.assertEqual(len(code), 6)
+        pcs = [inst.pc for inst in insts]
+        self.assertEqual(pcs, [0, 2, 3, 5, 6, 7])
+
+        # Test code.at(pc), code.get(pc), pc in code
+        for expected_pc in [0, 2, 3, 5, 6, 7]:
+            self.assertIn(expected_pc, code)
+            inst = code.at(expected_pc)
+            self.assertEqual(inst.pc, expected_pc)
+            self.assertEqual(code.get(expected_pc), inst)
+
+        # Missing PCs
+        self.assertNotIn(1, code)
+        self.assertNotIn(4, code)
+        self.assertNotIn(8, code)
+        self.assertNotIn(-1, code)
+        self.assertNotIn("invalid", code)
+
+        self.assertIsNone(code.get(1))
+        self.assertIsNone(code.get(8))
+        with self.assertRaises(KeyError):
+            code.at(1)
+
+        # BasicBlock.get(pc) tests
+        b0 = code.get_block_at(0)
+        assert b0 is not None
+        inst_0 = b0.get(0)
+        inst_2 = b0.get(2)
+        inst_3 = b0.get(3)
+        self.assertIsNotNone(inst_0)
+        self.assertIsNotNone(inst_2)
+        self.assertIsNotNone(inst_3)
+        assert inst_0 is not None
+        assert inst_2 is not None
+        assert inst_3 is not None
+        self.assertEqual(inst_0.pc, 0)
+        self.assertEqual(inst_2.pc, 2)
+        self.assertEqual(inst_3.pc, 3)
+
+        # Invalid PC within block range or outside block range
+        self.assertIsNone(b0.get(1))
+        self.assertIsNone(b0.get(5))
 
 
 if __name__ == "__main__":

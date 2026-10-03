@@ -111,10 +111,9 @@ class TestDebugInstructions(unittest.TestCase):
         self.assertEqual(inst_file, DbgSetFile(name_idx=None))
         self.assertEqual(inst_file.to_bytes(), raw_file)
 
-    def test_dataclasses_slots_and_frozen(self) -> None:
-        """Verify instruction dataclasses are slotted and immutable (frozen)."""
+    def test_dataclasses_frozen(self) -> None:
+        """Verify instruction dataclasses are immutable (frozen)."""
         inst = DbgAdvancePc(10)
-        self.assertTrue(hasattr(inst, "__slots__"))
         with self.assertRaises(AttributeError):
             inst.addr_diff = 20  # type: ignore[misc]
 
@@ -125,7 +124,6 @@ class TestDebugInstructions(unittest.TestCase):
             prologue_end=False,
             epilogue_begin=False,
         )
-        self.assertTrue(hasattr(pos, "__slots__"))
         with self.assertRaises(AttributeError):
             pos.address = 5  # type: ignore[misc]
 

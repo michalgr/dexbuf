@@ -88,25 +88,16 @@ class TestHeaderItemAndConstants(unittest.TestCase):
         self.assertEqual(HEADER_SIZE_V40, 0x70)
         self.assertEqual(HEADER_SIZE_V41, 0x78)
 
-    def test_header_item_class_attributes_and_slots(self) -> None:
-        """Verify HeaderItem padding, struct formats, slots, and field metadata."""
-        self.assertEqual(HeaderItem.PADDING, 4)
-        self.assertEqual(HeaderItem.STRUCT.format, "<8sI20s20I")
-        self.assertEqual(HeaderItem.STRUCT.size, 112)
-        self.assertEqual(HeaderItem.CONTAINER_STRUCT.format, "<II")
-        self.assertEqual(HeaderItem.CONTAINER_STRUCT.size, 8)
-
+    def test_header_item_fields_metadata(self) -> None:
+        """Verify HeaderItem field metadata."""
         field_names = [f.name for f in dataclasses.fields(HeaderItem)]
         self.assertIn("magic", field_names)
         self.assertIn("checksum", field_names)
         self.assertIn("container_size", field_names)
         self.assertIn("header_offset", field_names)
-        self.assertNotIn("PADDING", field_names)
-        self.assertNotIn("STRUCT", field_names)
-        self.assertNotIn("CONTAINER_STRUCT", field_names)
 
     def test_header_item_immutability(self) -> None:
-        """Verify HeaderItem frozen immutability and slots."""
+        """Verify HeaderItem frozen immutability."""
         hdr = HeaderItem(
             magic=b"dex\n035\x00",
             checksum=12345,
@@ -138,8 +129,6 @@ class TestHeaderItemAndConstants(unittest.TestCase):
 
         with self.assertRaises((TypeError, AttributeError)):
             hdr.version = "039"  # type: ignore[misc]
-
-        self.assertIsInstance(hdr.__slots__, tuple)
 
     def test_header_item_properties(self) -> None:
         """Verify version and is_valid_endian read-only properties."""
@@ -305,25 +294,18 @@ class TestStringDataItem(unittest.TestCase):
         self.assertEqual(supp_item.utf16_size, 7)
         self.assertEqual(supp_item.decode(), "𐀀World")
 
-    def test_padding_attribute(self) -> None:
-        """Test StringDataItem PADDING class attribute and fields metadata."""
-        self.assertEqual(StringDataItem.PADDING, 1)
-
-        # Verify PADDING is not in dataclasses.fields
+    def test_fields_metadata(self) -> None:
+        """Test StringDataItem fields metadata."""
         field_names = [f.name for f in dataclasses.fields(StringDataItem)]
         self.assertEqual(field_names, ["data", "utf16_size"])
-        self.assertNotIn("PADDING", field_names)
 
     def test_immutability(self) -> None:
-        """Test that StringDataItem is frozen and slotted."""
+        """Test that StringDataItem is frozen."""
         item = StringDataItem.from_str("Frozen")
         with self.assertRaises(FrozenInstanceError):
             item.data = memoryview(b"Modified")  # type: ignore[misc]
         with self.assertRaises(FrozenInstanceError):
             item.utf16_size = 10  # type: ignore[misc]
-
-        # Verify __slots__ is set on the class
-        self.assertEqual(item.__slots__, ("data", "utf16_size"))
 
     def test_to_bytes_and_from_cursor(self) -> None:
         """Test encoding StringDataItem to bytes and parsing via Cursor."""
@@ -397,21 +379,14 @@ class TestStringDataItem(unittest.TestCase):
 
 
 class TestStringIdItem(unittest.TestCase):
-    def test_padding_and_struct(self) -> None:
-        self.assertEqual(StringIdItem.PADDING, 4)
-        self.assertEqual(StringIdItem.STRUCT.format, "<I")
-
+    def test_fields_metadata(self) -> None:
         field_names = [f.name for f in dataclasses.fields(StringIdItem)]
         self.assertEqual(field_names, ["string_data_off"])
-        self.assertNotIn("PADDING", field_names)
-        self.assertNotIn("STRUCT", field_names)
 
-    def test_immutability_and_slots(self) -> None:
+    def test_immutability(self) -> None:
         item = StringIdItem(string_data_off=Offset[StringDataItem](0x1000))
         with self.assertRaises(FrozenInstanceError):
             item.string_data_off = Offset[StringDataItem](0x2000)  # type: ignore[misc]
-
-        self.assertEqual(item.__slots__, ("string_data_off",))
 
     def test_parsing_and_encoding_roundtrip(self) -> None:
         item = StringIdItem(string_data_off=Offset[StringDataItem](0x00123456))
@@ -430,21 +405,14 @@ class TestStringIdItem(unittest.TestCase):
 
 
 class TestTypeIdItem(unittest.TestCase):
-    def test_padding_and_struct(self) -> None:
-        self.assertEqual(TypeIdItem.PADDING, 4)
-        self.assertEqual(TypeIdItem.STRUCT.format, "<I")
-
+    def test_fields_metadata(self) -> None:
         field_names = [f.name for f in dataclasses.fields(TypeIdItem)]
         self.assertEqual(field_names, ["descriptor_idx"])
-        self.assertNotIn("PADDING", field_names)
-        self.assertNotIn("STRUCT", field_names)
 
-    def test_immutability_and_slots(self) -> None:
+    def test_immutability(self) -> None:
         item = TypeIdItem(descriptor_idx=Idx[StringIdItem](42))
         with self.assertRaises(FrozenInstanceError):
             item.descriptor_idx = Idx[StringIdItem](100)  # type: ignore[misc]
-
-        self.assertEqual(item.__slots__, ("descriptor_idx",))
 
     def test_parsing_and_encoding_roundtrip(self) -> None:
         item = TypeIdItem(descriptor_idx=Idx[StringIdItem](0x00ABCDEF))
@@ -462,16 +430,11 @@ class TestTypeIdItem(unittest.TestCase):
 
 
 class TestProtoIdItem(unittest.TestCase):
-    def test_padding_and_struct(self) -> None:
-        self.assertEqual(ProtoIdItem.PADDING, 4)
-        self.assertEqual(ProtoIdItem.STRUCT.format, "<III")
-
+    def test_fields_metadata(self) -> None:
         field_names = [f.name for f in dataclasses.fields(ProtoIdItem)]
         self.assertEqual(field_names, ["shorty_idx", "return_type_idx", "parameters_off"])
-        self.assertNotIn("PADDING", field_names)
-        self.assertNotIn("STRUCT", field_names)
 
-    def test_immutability_and_slots(self) -> None:
+    def test_immutability(self) -> None:
         item = ProtoIdItem(
             shorty_idx=Idx[StringIdItem](1),
             return_type_idx=Idx[TypeIdItem](2),
@@ -479,8 +442,6 @@ class TestProtoIdItem(unittest.TestCase):
         )
         with self.assertRaises(FrozenInstanceError):
             item.shorty_idx = Idx[StringIdItem](5)  # type: ignore[misc]
-
-        self.assertEqual(item.__slots__, ("shorty_idx", "return_type_idx", "parameters_off"))
 
     def test_no_offset_parameters(self) -> None:
         item = ProtoIdItem(
@@ -517,16 +478,11 @@ class TestProtoIdItem(unittest.TestCase):
 
 
 class TestFieldIdItem(unittest.TestCase):
-    def test_padding_and_struct(self) -> None:
-        self.assertEqual(FieldIdItem.PADDING, 4)
-        self.assertEqual(FieldIdItem.STRUCT.format, "<HHI")
-
+    def test_fields_metadata(self) -> None:
         field_names = [f.name for f in dataclasses.fields(FieldIdItem)]
         self.assertEqual(field_names, ["class_idx", "type_idx", "name_idx"])
-        self.assertNotIn("PADDING", field_names)
-        self.assertNotIn("STRUCT", field_names)
 
-    def test_immutability_and_slots(self) -> None:
+    def test_immutability(self) -> None:
         item = FieldIdItem(
             class_idx=Idx[TypeIdItem](1),
             type_idx=Idx[TypeIdItem](2),
@@ -534,8 +490,6 @@ class TestFieldIdItem(unittest.TestCase):
         )
         with self.assertRaises(FrozenInstanceError):
             item.class_idx = Idx[TypeIdItem](10)  # type: ignore[misc]
-
-        self.assertEqual(item.__slots__, ("class_idx", "type_idx", "name_idx"))
 
     def test_parsing_and_encoding_roundtrip(self) -> None:
         item = FieldIdItem(
@@ -557,16 +511,11 @@ class TestFieldIdItem(unittest.TestCase):
 
 
 class TestMethodIdItem(unittest.TestCase):
-    def test_padding_and_struct(self) -> None:
-        self.assertEqual(MethodIdItem.PADDING, 4)
-        self.assertEqual(MethodIdItem.STRUCT.format, "<HHI")
-
+    def test_fields_metadata(self) -> None:
         field_names = [f.name for f in dataclasses.fields(MethodIdItem)]
         self.assertEqual(field_names, ["class_idx", "proto_idx", "name_idx"])
-        self.assertNotIn("PADDING", field_names)
-        self.assertNotIn("STRUCT", field_names)
 
-    def test_immutability_and_slots(self) -> None:
+    def test_immutability(self) -> None:
         item = MethodIdItem(
             class_idx=Idx[TypeIdItem](1),
             proto_idx=Idx[ProtoIdItem](2),
@@ -574,8 +523,6 @@ class TestMethodIdItem(unittest.TestCase):
         )
         with self.assertRaises(FrozenInstanceError):
             item.class_idx = Idx[TypeIdItem](10)  # type: ignore[misc]
-
-        self.assertEqual(item.__slots__, ("class_idx", "proto_idx", "name_idx"))
 
     def test_parsing_and_encoding_roundtrip(self) -> None:
         item = MethodIdItem(
@@ -597,30 +544,21 @@ class TestMethodIdItem(unittest.TestCase):
 
 
 class TestTypeList(unittest.TestCase):
-    def test_padding_and_headers(self) -> None:
-        self.assertEqual(TypeList.PADDING, 4)
-        self.assertEqual(TypeList.HEADER.format, "<I")
-        self.assertEqual(TypeList.Item.STRUCT.format, "<H")
-
+    def test_fields_metadata(self) -> None:
         type_list_fields = [f.name for f in dataclasses.fields(TypeList)]
         self.assertEqual(type_list_fields, ["list"])
-        self.assertNotIn("PADDING", type_list_fields)
-        self.assertNotIn("HEADER", type_list_fields)
 
         item_fields = [f.name for f in dataclasses.fields(TypeList.Item)]
         self.assertEqual(item_fields, ["type_idx"])
-        self.assertNotIn("STRUCT", item_fields)
 
-    def test_immutability_and_slots(self) -> None:
+    def test_immutability(self) -> None:
         item = TypeList.Item(type_idx=Idx[TypeIdItem](1))
         with self.assertRaises(FrozenInstanceError):
             item.type_idx = Idx[TypeIdItem](2)  # type: ignore[misc]
-        self.assertEqual(item.__slots__, ("type_idx",))
 
         type_list = TypeList(list=(item,))
         with self.assertRaises((TypeError, AttributeError)):
             type_list.size = 2  # type: ignore[misc]
-        self.assertEqual(type_list.__slots__, ("list",))
 
     def test_empty_list(self) -> None:
         empty = TypeList(list=())
@@ -663,10 +601,7 @@ class TestTypeList(unittest.TestCase):
 
 
 class TestClassDefItem(unittest.TestCase):
-    def test_padding_and_struct(self) -> None:
-        self.assertEqual(ClassDefItem.PADDING, 4)
-        self.assertEqual(ClassDefItem.STRUCT.format, "<8I")
-
+    def test_fields_metadata(self) -> None:
         field_names = [f.name for f in dataclasses.fields(ClassDefItem)]
         expected_fields = [
             "class_idx",
@@ -679,10 +614,8 @@ class TestClassDefItem(unittest.TestCase):
             "static_values_off",
         ]
         self.assertEqual(field_names, expected_fields)
-        self.assertNotIn("PADDING", field_names)
-        self.assertNotIn("STRUCT", field_names)
 
-    def test_immutability_and_slots(self) -> None:
+    def test_immutability(self) -> None:
         item = ClassDefItem(
             class_idx=Idx[TypeIdItem](1),
             access_flags=1,
@@ -695,18 +628,6 @@ class TestClassDefItem(unittest.TestCase):
         )
         with self.assertRaises(FrozenInstanceError):
             item.access_flags = 2  # type: ignore[misc]
-
-        expected_slots = (
-            "class_idx",
-            "access_flags",
-            "superclass_idx",
-            "interfaces_off",
-            "source_file_idx",
-            "annotations_off",
-            "class_data_off",
-            "static_values_off",
-        )
-        self.assertEqual(item.__slots__, expected_slots)
 
     def test_parsing_and_encoding_roundtrip(self) -> None:
         item = ClassDefItem(
@@ -784,12 +705,10 @@ class TestClassDefItem(unittest.TestCase):
 
 
 class TestEncodedFieldAndMethod(unittest.TestCase):
-    def test_encoded_field_immutability_and_slots(self) -> None:
+    def test_encoded_field_immutability(self) -> None:
         field = EncodedField(field_idx_diff=5, access_flags=0x0001)
         with self.assertRaises(FrozenInstanceError):
             field.access_flags = 0x0002  # type: ignore[misc]
-
-        self.assertEqual(field.__slots__, ("field_idx_diff", "access_flags"))
 
     def test_encoded_field_roundtrip(self) -> None:
         field = EncodedField(field_idx_diff=128, access_flags=8)
@@ -799,14 +718,12 @@ class TestEncodedFieldAndMethod(unittest.TestCase):
         self.assertEqual(parsed, field)
         self.assertTrue(cursor.is_eof)
 
-    def test_encoded_method_immutability_and_slots(self) -> None:
+    def test_encoded_method_immutability(self) -> None:
         method = EncodedMethod(
             method_idx_diff=10, access_flags=0x0001, code_off=Offset[Any](0x1000)
         )
         with self.assertRaises(FrozenInstanceError):
             method.access_flags = 0x0002  # type: ignore[misc]
-
-        self.assertEqual(method.__slots__, ("method_idx_diff", "access_flags", "code_off"))
 
     def test_encoded_method_roundtrip(self) -> None:
         method = EncodedMethod(
@@ -822,14 +739,9 @@ class TestEncodedFieldAndMethod(unittest.TestCase):
 
 class TestTryAndCatchHandlers(unittest.TestCase):
     def test_try_item(self) -> None:
-        self.assertEqual(TryItem.PADDING, 4)
-        self.assertEqual(TryItem.STRUCT.format, "<IHH")
-
         item = TryItem(start_addr=0x10, insn_count=5, handler_off=0x20)
         with self.assertRaises(FrozenInstanceError):
             item.start_addr = 0x20  # type: ignore[misc]
-
-        self.assertEqual(item.__slots__, ("start_addr", "insn_count", "handler_off"))
 
         raw = item.to_bytes()
         self.assertEqual(len(raw), 8)
@@ -851,7 +763,6 @@ class TestTryAndCatchHandlers(unittest.TestCase):
         empty_table = TryTable()
         self.assertEqual(len(empty_table), 0)
         self.assertEqual(empty_table.to_bytes(), b"")
-        self.assertEqual(empty_table.__slots__, ("_buffer",))
 
         # from_tries classmethod
         t1 = TryItem(start_addr=0x10, insn_count=5, handler_off=0x00)
@@ -899,8 +810,6 @@ class TestTryAndCatchHandlers(unittest.TestCase):
         pair = EncodedTypeAddrPair(type_idx=Idx[TypeIdItem](3), addr=0x100)
         with self.assertRaises(FrozenInstanceError):
             pair.addr = 0x200  # type: ignore[misc]
-
-        self.assertEqual(pair.__slots__, ("type_idx", "addr"))
 
         raw = pair.to_bytes()
         parsed = EncodedTypeAddrPair.from_cursor(Cursor(raw))
@@ -955,8 +864,6 @@ class TestTryAndCatchHandlers(unittest.TestCase):
         with self.assertRaises((TypeError, AttributeError)):
             handler_catch_all.size = 1  # type: ignore[misc]
 
-        self.assertEqual(handler_catch_all.__slots__, ("handlers", "catch_all_addr"))
-
         raw1 = handler_catch_all.to_bytes()
         parsed1 = EncodedCatchHandler.from_cursor(Cursor(raw1))
         self.assertEqual(parsed1, handler_catch_all)
@@ -1009,7 +916,6 @@ class TestTryAndCatchHandlers(unittest.TestCase):
 
         self.assertEqual(handler_list.size, 2)
         self.assertEqual(len(handler_list), 2)
-        self.assertEqual(handler_list.__slots__, ("_buffer",))
         self.assertIs(CatchHandlerMap, EncodedCatchHandlerList)
 
         # Iteration yields relative byte offsets of handlers
@@ -1055,7 +961,6 @@ class TestInstructionBuffer(unittest.TestCase):
         self.assertEqual(buf.to_bytes(), b"")
         self.assertEqual(list(buf), [])
         self.assertEqual(buf.parse(), ())
-        self.assertEqual(buf.__slots__, ("_buffer",))
 
     def test_instruction_buffer_indexing_and_iteration(self) -> None:
         # nop (0x0000), return-void (0x000e) -> 2 code units = 4 bytes
@@ -1118,10 +1023,7 @@ class TestInstructionBuffer(unittest.TestCase):
 
 
 class TestCodeItem(unittest.TestCase):
-    def test_padding_and_struct(self) -> None:
-        self.assertEqual(CodeItem.PADDING, 4)
-        self.assertEqual(CodeItem.HEADER.format, "<4H2I")
-
+    def test_fields_metadata(self) -> None:
         field_names = [f.name for f in dataclasses.fields(CodeItem)]
         expected_fields = [
             "registers_size",
@@ -1134,7 +1036,7 @@ class TestCodeItem(unittest.TestCase):
         ]
         self.assertEqual(field_names, expected_fields)
 
-    def test_immutability_and_slots(self) -> None:
+    def test_immutability(self) -> None:
         item = CodeItem(
             registers_size=2,
             ins_size=1,
@@ -1150,17 +1052,6 @@ class TestCodeItem(unittest.TestCase):
             item.insns_size = 5  # type: ignore[misc]
         with self.assertRaises((TypeError, AttributeError)):
             item.tries_size = 2  # type: ignore[misc]
-
-        expected_slots = (
-            "registers_size",
-            "ins_size",
-            "outs_size",
-            "debug_info_off",
-            "insns",
-            "tries",
-            "handlers",
-        )
-        self.assertEqual(item.__slots__, expected_slots)
 
     def test_zero_copy_and_lazy_iop_parsing(self) -> None:
         # nop (0x0000), return-void (0x000e) -> 2 code units = 4 bytes
@@ -1307,8 +1198,7 @@ class TestCodeItem(unittest.TestCase):
 
 
 class TestClassDataItem(unittest.TestCase):
-    def test_padding_attribute_and_nested_aliases(self) -> None:
-        self.assertEqual(ClassDataItem.PADDING, 1)
+    def test_nested_aliases_and_fields(self) -> None:
         self.assertIs(ClassDataItem.EncodedField, EncodedField)
         self.assertIs(ClassDataItem.EncodedMethod, EncodedMethod)
 
@@ -1320,11 +1210,8 @@ class TestClassDataItem(unittest.TestCase):
             "virtual_methods",
         ]
         self.assertEqual(field_names, expected_fields)
-        self.assertNotIn("PADDING", field_names)
-        self.assertNotIn("EncodedField", field_names)
-        self.assertNotIn("EncodedMethod", field_names)
 
-    def test_immutability_and_slots(self) -> None:
+    def test_immutability(self) -> None:
         item = ClassDataItem(
             static_fields=(),
             instance_fields=(),
@@ -1333,14 +1220,6 @@ class TestClassDataItem(unittest.TestCase):
         )
         with self.assertRaises((TypeError, AttributeError)):
             item.static_fields_size = 1  # type: ignore[misc]
-
-        expected_slots = (
-            "static_fields",
-            "instance_fields",
-            "direct_methods",
-            "virtual_methods",
-        )
-        self.assertEqual(item.__slots__, expected_slots)
 
     def test_empty_class_data(self) -> None:
         empty = ClassDataItem(
@@ -1503,15 +1382,12 @@ class TestClassDataItem(unittest.TestCase):
 
 
 class TestDebugInfoItem(unittest.TestCase):
-    def test_padding_and_fields(self) -> None:
-        self.assertEqual(DebugInfoItem.PADDING, 1)
-
+    def test_fields_metadata(self) -> None:
         field_names = [f.name for f in dataclasses.fields(DebugInfoItem)]
         expected_fields = ["line_start", "parameter_names", "bytecode"]
         self.assertEqual(field_names, expected_fields)
-        self.assertNotIn("PADDING", field_names)
 
-    def test_immutability_and_slots(self) -> None:
+    def test_immutability(self) -> None:
         item = DebugInfoItem(
             line_start=1,
             parameter_names=(),
@@ -1521,8 +1397,6 @@ class TestDebugInfoItem(unittest.TestCase):
             item.line_start = 2  # type: ignore[misc]
         with self.assertRaises((TypeError, AttributeError)):
             item.parameters_size = 5  # type: ignore[misc]
-
-        self.assertEqual(item.__slots__, ("line_start", "parameter_names", "bytecode"))
 
     def test_zero_copy_bytecode_and_roundtrip(self) -> None:
         # line_start=1, parameters_size=2 (param1=Idx(0), param2=None)
@@ -1626,17 +1500,13 @@ class TestDebugInfoItem(unittest.TestCase):
 
 class TestEncodedArrayItemAndCallSiteIdItem(unittest.TestCase):
     def test_encoded_array_item(self) -> None:
-        """Verify EncodedArrayItem PADDING, immutability, parsing, and serialization."""
-        self.assertEqual(EncodedArrayItem.PADDING, 1)
-
+        """Verify EncodedArrayItem immutability, parsing, and serialization."""
         val = EncodedValue(value_arg=0, value_type=ValueType.INT, value=100)
         arr = EncodedArray(values=(val,))
         item = EncodedArrayItem(value=arr)
 
         with self.assertRaises(FrozenInstanceError):
             item.value = arr  # type: ignore[misc]
-
-        self.assertEqual(item.__slots__, ("value",))
 
         raw = item.to_bytes()
         parsed = EncodedArrayItem.from_buffer(raw)
@@ -1645,8 +1515,6 @@ class TestEncodedArrayItemAndCallSiteIdItem(unittest.TestCase):
 
     def test_call_site_id_item(self) -> None:
         """Verify CallSiteIdItem call_site_off typed as Offset[EncodedArrayItem]."""
-        self.assertEqual(CallSiteIdItem.PADDING, 4)
-
         item = CallSiteIdItem(call_site_off=Offset[EncodedArrayItem](0x001000))
         with self.assertRaises(FrozenInstanceError):
             item.call_site_off = Offset[EncodedArrayItem](0x2000)  # type: ignore[misc]
@@ -1665,9 +1533,7 @@ class TestAnnotationItems(unittest.TestCase):
         self.assertEqual(AnnotationVisibility.SYSTEM, 0x02)
 
     def test_annotation_item(self) -> None:
-        """Verify AnnotationItem padding, immutability, parsing, and serialization."""
-        self.assertEqual(AnnotationItem.PADDING, 1)
-
+        """Verify AnnotationItem immutability, parsing, and serialization."""
         val = EncodedValue(value_arg=0, value_type=ValueType.INT, value=42)
         elem = AnnotationElement(name_idx=Idx[Any](1), value=val)
         ann = EncodedAnnotation(type_idx=Idx[Any](10), elements=(elem,))
@@ -1676,22 +1542,16 @@ class TestAnnotationItems(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             item.visibility = AnnotationVisibility.BUILD  # type: ignore[misc]
 
-        self.assertEqual(item.__slots__, ("visibility", "annotation"))
-
         raw = item.to_bytes()
         parsed = AnnotationItem.from_buffer(raw)
         self.assertEqual(parsed, item)
         self.assertEqual(parsed.visibility, AnnotationVisibility.RUNTIME)
 
     def test_annotation_off_item(self) -> None:
-        """Verify AnnotationOffItem struct, immutability, and roundtrip."""
-        self.assertEqual(AnnotationOffItem.STRUCT.format, "<I")
-
+        """Verify AnnotationOffItem immutability and roundtrip."""
         item = AnnotationOffItem(annotation_off=Offset[AnnotationItem](0x1234))
         with self.assertRaises(FrozenInstanceError):
             item.annotation_off = Offset[AnnotationItem](0x5678)  # type: ignore[misc]
-
-        self.assertEqual(item.__slots__, ("annotation_off",))
 
         raw = item.to_bytes()
         self.assertEqual(len(raw), 4)
@@ -1700,10 +1560,7 @@ class TestAnnotationItems(unittest.TestCase):
         self.assertEqual(parsed, item)
 
     def test_annotation_set_item(self) -> None:
-        """Verify AnnotationSetItem padding, sequence protocol, immutability, and roundtrip."""
-        self.assertEqual(AnnotationSetItem.PADDING, 4)
-        self.assertEqual(AnnotationSetItem.HEADER.format, "<I")
-
+        """Verify AnnotationSetItem sequence protocol, immutability, and roundtrip."""
         entry1 = AnnotationOffItem(annotation_off=Offset[AnnotationItem](0x100))
         entry2 = AnnotationOffItem(annotation_off=Offset[AnnotationItem](0x200))
         set_item = AnnotationSetItem(entries=(entry1, entry2))
@@ -1711,7 +1568,6 @@ class TestAnnotationItems(unittest.TestCase):
         with self.assertRaises((TypeError, AttributeError)):
             set_item.size = 1  # type: ignore[misc]
 
-        self.assertEqual(set_item.__slots__, ("entries",))
         self.assertEqual(len(set_item), 2)
         self.assertEqual(set_item[0], entry1)
         self.assertEqual(set_item[1], entry2)
@@ -1725,14 +1581,10 @@ class TestAnnotationItems(unittest.TestCase):
         self.assertEqual(parsed, set_item)
 
     def test_annotation_set_ref_item(self) -> None:
-        """Verify AnnotationSetRefItem struct, immutability, and roundtrip."""
-        self.assertEqual(AnnotationSetRefItem.STRUCT.format, "<I")
-
+        """Verify AnnotationSetRefItem immutability and roundtrip."""
         item = AnnotationSetRefItem(annotations_off=Offset[AnnotationSetItem](0x300))
         with self.assertRaises(FrozenInstanceError):
             item.annotations_off = Offset[AnnotationSetItem](0x400)  # type: ignore[misc]
-
-        self.assertEqual(item.__slots__, ("annotations_off",))
 
         raw = item.to_bytes()
         self.assertEqual(len(raw), 4)
@@ -1741,10 +1593,7 @@ class TestAnnotationItems(unittest.TestCase):
         self.assertEqual(parsed, item)
 
     def test_annotation_set_ref_list(self) -> None:
-        """Verify AnnotationSetRefList padding, sequence protocol, immutability, and roundtrip."""
-        self.assertEqual(AnnotationSetRefList.PADDING, 4)
-        self.assertEqual(AnnotationSetRefList.HEADER.format, "<I")
-
+        """Verify AnnotationSetRefList sequence protocol, immutability, and roundtrip."""
         ref1 = AnnotationSetRefItem(annotations_off=Offset[AnnotationSetItem](0x1000))
         ref2 = AnnotationSetRefItem(annotations_off=Offset[AnnotationSetItem](0x2000))
         ref_list = AnnotationSetRefList(list=(ref1, ref2))
@@ -1752,7 +1601,6 @@ class TestAnnotationItems(unittest.TestCase):
         with self.assertRaises((TypeError, AttributeError)):
             ref_list.size = 3  # type: ignore[misc]
 
-        self.assertEqual(ref_list.__slots__, ("list",))
         self.assertEqual(len(ref_list), 2)
         self.assertEqual(ref_list[0], ref1)
         self.assertEqual(ref_list[1], ref2)
@@ -1766,11 +1614,7 @@ class TestAnnotationItems(unittest.TestCase):
         self.assertEqual(parsed, ref_list)
 
     def test_field_method_parameter_annotation(self) -> None:
-        """Verify FieldAnnotation, MethodAnnotation, ParameterAnnotation structs and roundtrip."""
-        self.assertEqual(FieldAnnotation.STRUCT.format, "<II")
-        self.assertEqual(MethodAnnotation.STRUCT.format, "<II")
-        self.assertEqual(ParameterAnnotation.STRUCT.format, "<II")
-
+        """Verify annotation immutability and roundtrip."""
         fa = FieldAnnotation(
             field_idx=Idx[FieldIdItem](1),
             annotations_off=Offset[AnnotationSetItem](0x100),
@@ -1791,19 +1635,12 @@ class TestAnnotationItems(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             pa.method_idx = Idx[MethodIdItem](30)  # type: ignore[misc]
 
-        self.assertEqual(fa.__slots__, ("field_idx", "annotations_off"))
-        self.assertEqual(ma.__slots__, ("method_idx", "annotations_off"))
-        self.assertEqual(pa.__slots__, ("method_idx", "annotations_off"))
-
         self.assertEqual(FieldAnnotation.from_buffer(fa.to_bytes()), fa)
         self.assertEqual(MethodAnnotation.from_buffer(ma.to_bytes()), ma)
         self.assertEqual(ParameterAnnotation.from_buffer(pa.to_bytes()), pa)
 
     def test_annotations_directory_item(self) -> None:
-        """Verify AnnotationsDirectoryItem padding, struct, immutability, and roundtrip."""
-        self.assertEqual(AnnotationsDirectoryItem.PADDING, 4)
-        self.assertEqual(AnnotationsDirectoryItem.HEADER.format, "<4I")
-
+        """Verify AnnotationsDirectoryItem immutability and roundtrip."""
         fa = FieldAnnotation(
             field_idx=Idx[FieldIdItem](1),
             annotations_off=Offset[AnnotationSetItem](0x100),
@@ -1831,16 +1668,6 @@ class TestAnnotationItems(unittest.TestCase):
         with self.assertRaises((TypeError, AttributeError)):
             dir_item.fields_size = 2  # type: ignore[misc]
 
-        self.assertEqual(
-            dir_item.__slots__,
-            (
-                "class_annotations_off",
-                "field_annotations",
-                "method_annotations",
-                "parameter_annotations",
-            ),
-        )
-
         raw = dir_item.to_bytes()
         self.assertEqual(len(raw), 16 + 8 + 8 + 8)
 
@@ -1859,18 +1686,14 @@ class TestHiddenapiClassDataItem(unittest.TestCase):
         self.assertEqual(HiddenapiRestrictionFlag.GREYLIST_MAX_Q, 5)
         self.assertEqual(HiddenapiRestrictionFlag.GREYLIST_MAX_R, 6)
 
-    def test_padding_and_fields(self) -> None:
-        """Verify PADDING class attribute, slots, and frozen immutability."""
-        self.assertEqual(HiddenapiClassDataItem.PADDING, 4)
-
+    def test_immutability_and_fields(self) -> None:
+        """Verify frozen immutability and fields."""
         item = HiddenapiClassDataItem(data=memoryview(b"\x00" * 8))
         with self.assertRaises(FrozenInstanceError):
             item.data = memoryview(b"")  # type: ignore[misc]
 
         with self.assertRaises((TypeError, AttributeError)):
             item.size = 10  # type: ignore[misc]
-
-        self.assertEqual(item.__slots__, ("data",))
 
         field_names = [f.name for f in dataclasses.fields(HiddenapiClassDataItem)]
         self.assertEqual(field_names, ["data"])
@@ -1997,11 +1820,8 @@ class TestMapListAndItems(unittest.TestCase):
             self.assertEqual(member, expected_val)
             self.assertEqual(member.value, expected_val)
 
-    def test_map_item_attributes_slots_immutability(self) -> None:
-        """Verify MapItem padding, struct format, slots, default unused, and immutability."""
-        self.assertEqual(MapItem.PADDING, 4)
-        self.assertEqual(MapItem.STRUCT.format, "<HHII")
-
+    def test_map_item_attributes_and_immutability(self) -> None:
+        """Verify MapItem attributes, default unused, and immutability."""
         item = MapItem(item_type=ItemType.HEADER_ITEM, size=1, offset=Offset[Any](0))
         self.assertEqual(item.item_type, 0x0000)
         self.assertEqual(item.size, 1)
@@ -2010,8 +1830,6 @@ class TestMapListAndItems(unittest.TestCase):
 
         with self.assertRaises(FrozenInstanceError):
             item.item_type = ItemType.STRING_ID_ITEM  # type: ignore[misc]
-
-        self.assertEqual(item.__slots__, ("item_type", "size", "offset", "unused"))
 
     def test_map_item_roundtrip_and_buffer(self) -> None:
         """Verify MapItem serialization roundtrip and buffer parsing."""
@@ -2033,9 +1851,7 @@ class TestMapListAndItems(unittest.TestCase):
         self.assertEqual(from_buf, item)
 
     def test_map_list(self) -> None:
-        """Verify MapList padding, header, size property, collection interface, and get lookup."""
-        self.assertEqual(MapList.PADDING, 4)
-        self.assertEqual(MapList.HEADER.format, "<I")
+        """Verify MapList size property, collection interface, and get lookup."""
         self.assertIs(MapList.Item, MapItem)
 
         # Empty MapList

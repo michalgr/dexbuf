@@ -1786,7 +1786,6 @@ class Code:
     """High-level domain model wrapping CodeItem with CFG basic blocks and instruction lookup."""
 
     __slots__ = (
-        "_block_start_pcs",
         "_blocks",
         "_instructions",
         "_item",
@@ -1844,7 +1843,6 @@ class Code:
         self._blocks: tuple[BasicBlock, ...] = self._build_basic_blocks(
             self._instructions, self._pc_map, self._try_catches
         )
-        self._block_start_pcs: tuple[int, ...] = tuple(b.start_pc for b in self._blocks)
 
     @staticmethod
     def _build_basic_blocks(
@@ -2033,7 +2031,7 @@ class Code:
         return self._blocks[0]
 
     def get_block_at(self, pc: int) -> BasicBlock | None:
-        idx = bisect_right(self._block_start_pcs, pc) - 1
+        idx = bisect_right(self._blocks, pc, key=lambda b: b._start_pc) - 1
         if idx >= 0:
             block = self._blocks[idx]
             if block.covers(pc):

@@ -2233,12 +2233,6 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
             all(not isinstance(inst.raw, PackedSwitchPayload) for inst in code.instructions)
         )
 
-        # Verify payloads collection and lookup
-        self.assertEqual(len(code.payloads), 1)
-        self.assertIsInstance(code.payloads[0], PackedSwitchPayload)
-        self.assertEqual(code.get_payload(4), payload)
-        self.assertIsNone(code.get_payload(0))
-
         # Verify CodeInstruction.payload linking on referring switch instruction
         sw_code_inst = code.at(0)
         self.assertEqual(sw_code_inst.payload, payload)

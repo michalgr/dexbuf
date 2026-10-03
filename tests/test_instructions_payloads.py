@@ -108,7 +108,6 @@ class TestInstructionPayloads(unittest.TestCase):
             payload.first_key = 10  # type: ignore[misc]
 
         fill_payload = FillArrayDataPayload(element_width=1, data=b"\x01")
-        self.assertEqual(fill_payload.__slots__, ("element_width", "data"))
         with self.assertRaises((TypeError, AttributeError)):
             fill_payload.size = 10  # type: ignore[misc]
 

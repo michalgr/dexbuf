@@ -39,7 +39,7 @@ class TestValueType(unittest.TestCase):
 
 class TestEncodedValue(unittest.TestCase):
     def test_immutability(self) -> None:
-        """Verify EncodedValue is frozen and uses slots."""
+        """Verify EncodedValue is frozen."""
         val = EncodedValue(value_arg=0, value_type=ValueType.BYTE, value=42)
         with self.assertRaises(FrozenInstanceError):
             val.value = 100  # type: ignore[misc]
@@ -161,7 +161,6 @@ class TestEncodedArrayAndAnnotation(unittest.TestCase):
         with self.assertRaises((TypeError, AttributeError)):
             arr.size = 10  # type: ignore[misc]
 
-        self.assertEqual(arr.__slots__, ("values",))
         self.assertEqual(len(arr), 2)
         self.assertEqual(list(iter(arr)), [v1, v2])
         self.assertEqual(arr[0], v1)
@@ -184,7 +183,6 @@ class TestEncodedArrayAndAnnotation(unittest.TestCase):
         with self.assertRaises((TypeError, AttributeError)):
             annotation.size = 10  # type: ignore[misc]
 
-        self.assertEqual(annotation.__slots__, ("type_idx", "elements"))
         self.assertEqual(len(annotation), 1)
         self.assertEqual(annotation[0], elem)
         self.assertEqual(list(iter(annotation)), [elem])

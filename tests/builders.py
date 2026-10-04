@@ -103,9 +103,14 @@ def create_minimal_dex_bytes() -> bytes:
     return bytes(buf)
 
 
-def build_dex_bytes(classes: list[dict[str, Any]]) -> bytes:
+def build_dex_bytes(
+    classes: list[dict[str, Any]],
+    extra_strings: list[str] | None = None,
+) -> bytes:
     """Build a minimal valid DEX binary buffer for testing."""
     raw_strings = {"V"}
+    if extra_strings:
+        raw_strings.update(extra_strings)
     field_defs: list[dict[str, Any]] = []
     method_defs: list[dict[str, Any]] = []
     proto_defs_set: set[tuple[str, tuple[str, ...]]] = set()

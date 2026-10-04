@@ -10,7 +10,7 @@ from dexbuf.type_lookup import (
     TypeLookupTableEntry,
     _BuilderEntry,
 )
-from tests.builders import build_dex_bytes  # type: ignore[import-not-found, missing-import]
+from tests.builders import build_dex_bytes
 
 
 def _make_dex(class_descriptors: list[str]) -> bytes:

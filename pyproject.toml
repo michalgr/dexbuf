@@ -69,3 +69,4 @@ addopts = "-ra -q"
 
 [tool.pyrefly]
 # Static typechecker configuration targeting Python 3.14+
+search-path = ["src", "."]

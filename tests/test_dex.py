@@ -452,7 +452,9 @@ class TestDexFile(unittest.TestCase):
         map_list = self.dex.map_list
         self.assertIsInstance(map_list, MapList)
         self.assertGreaterEqual(len(map_list), 8)
-        self.assertEqual(map_list.get(ItemType.HEADER_ITEM).offset, 0)  # type: ignore[union-attr]
+        header_map_item = map_list.get(ItemType.HEADER_ITEM)
+        assert header_map_item is not None
+        self.assertEqual(header_map_item.offset, 0)
 
     def test_lazy_table_sequences_indexing_and_iteration(self) -> None:
         """Verify TableSequence len, indexing, bounds, negative indices, slices, and iter."""
@@ -874,7 +876,8 @@ class TestDexFile(unittest.TestCase):
         class_def = self.dex.find_class_def("LTestClass;")
         self.assertIsInstance(class_def, ClassDefItem)
         self.assertEqual(class_def, self.dex.class_defs[0])
-        self.assertEqual(class_def.class_idx, Idx[TypeIdItem](1))  # type: ignore[union-attr]
+        assert class_def is not None
+        self.assertEqual(class_def.class_idx, Idx[TypeIdItem](1))
 
         # Lookup by Idx[TypeIdItem] (existing class)
         class_def_by_idx = self.dex.find_class_def(Idx[TypeIdItem](1))

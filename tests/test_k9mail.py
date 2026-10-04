@@ -5,7 +5,7 @@ import unittest
 import dexbuf
 from dexbuf.items import AnnotationVisibility, CodeItem
 from dexbuf.model import ResolvedClass, UnresolvedClass, ZipAdapter
-from tests.helpers import get_k9mail_apk_path  # type: ignore[import-not-found]
+from tests.helpers import get_k9mail_apk_path
 
 
 class TestK9MailIntegration(unittest.TestCase):

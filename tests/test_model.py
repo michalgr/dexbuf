@@ -32,7 +32,7 @@ from dexbuf import (
     load,
     open,
 )
-from tests.builders import (  # type: ignore[import-not-found, missing-import]
+from tests.builders import (
     build_dex_bytes,
     build_vdex_bytes,
 )

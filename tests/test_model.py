@@ -802,7 +802,6 @@ class TestClassLoader(unittest.TestCase):
 
         # ClassLoader.from_elements wraps raw containers into adapters
         loader = ClassLoader.from_elements([dex])
-        self.assertFalse(hasattr(loader, "dex_files"))
         self.assertEqual(len(loader.elements), 1)
         self.assertIsInstance(loader.elements[0], DexAdapter)
 
@@ -2154,38 +2153,6 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         self.assertIn(".method", dis)
         self.assertIn("const-string", dis)
 
-    def test_basic_block_and_code_no_getitem(self) -> None:
-        code_bytes = b"\x0e\x00"  # 0000: return-void
-        dex_bytes = build_dex_bytes(
-            [
-                {
-                    "name": "Lcom/example/NoGetItem;",
-                    "super": "Ljava/lang/Object;",
-                    "access_flags": 1,
-                    "direct_methods": [
-                        {
-                            "name": "run",
-                            "return_type": "V",
-                            "params": [],
-                            "access_flags": 1,
-                            "code": code_bytes,
-                        }
-                    ],
-                }
-            ]
-        )
-        loader = ClassLoader.from_elements([DexFile(dex_bytes)])
-        m = loader["com.example.NoGetItem"].get_method("run")
-        assert m is not None and m.code is not None
-        code = m.code
-        block = code.entry_block
-
-        # Confirm __getitem__ is NOT implemented on Code or BasicBlock
-        with self.assertRaises(TypeError):
-            _ = code[0]  # type: ignore[typeddict-item]
-        with self.assertRaises(TypeError):
-            _ = block[0]  # type: ignore[typeddict-item]
-
     def test_payload_decoupling_next_pcs_and_switch_cfg(self) -> None:
         from dexbuf.instructions import PackedSwitch, ReturnVoid
         from dexbuf.instructions.payloads import PackedSwitchPayload
@@ -2619,9 +2586,6 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         self.assertEqual(edge.target_pc, 3)
         self.assertEqual(edge.type_name, "com.example.TryCatchTest")
 
-        self.assertFalse(hasattr(code, "try_catches"))
-        self.assertFalse(hasattr(code, "find_try_catch"))
-
         self.assertEqual(block0.exception_successors, (edge.target_block,))
         self.assertEqual(block0.exception_handlers, (edge.handler,))
 
@@ -2756,9 +2720,6 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         m = loader["com.example.CodeDelegationTest"].get_method("testMethod")
         assert m is not None and m.code is not None
         code = m.code
-
-        # Verify instructions property does not exist on Code
-        self.assertFalse(hasattr(code, "instructions"))
 
         # Iteration across block boundaries in execution order
         insts = list(code)

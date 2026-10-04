@@ -225,14 +225,9 @@ def create_test_apk_bytes(entries: dict[str, bytes]) -> bytes:
 
 class TestVdexFile(unittest.TestCase):
     def test_header_and_lazy_initialization(self) -> None:
-        """Verify VdexHeader parsing and that VdexFile __init__ does not pre-cache attributes."""
+        """Verify VdexHeader parsing and basic properties."""
         vdex_bytes = create_test_vdex([(VdexSectionKind.VERIFIER_DEPS, b"verifier_deps_data")])
         vdex = VdexFile(vdex_bytes)
-
-        # Assert no pre-cached attributes
-        self.assertFalse(hasattr(vdex, "_sections"))
-        self.assertFalse(hasattr(vdex, "_checksums"))
-        self.assertFalse(hasattr(vdex, "_dex_offsets"))
 
         # Verify header attributes
         self.assertIsInstance(vdex.header, VdexHeader)

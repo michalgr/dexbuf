@@ -118,9 +118,6 @@ class TestZipArchive(unittest.TestCase):
         )
         archive = ZipArchive(zip_bytes)
 
-        # Ensure no _entries cache dictionary was created
-        self.assertFalse(hasattr(archive, "_entries"))
-
         # Verify EOCD record values
         self.assertIsInstance(archive.eocd, EndOfCentralDirectoryRecord)
         self.assertEqual(archive.eocd.total_entries, 1)

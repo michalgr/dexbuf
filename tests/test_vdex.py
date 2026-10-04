@@ -17,7 +17,6 @@ from dexbuf.items import (
     ClassDefItem,
     FieldIdItem,
     HeaderItem,
-    MapList,
     MethodIdItem,
     ProtoIdItem,
     StringDataItem,
@@ -35,73 +34,9 @@ from dexbuf.vdex import (
     VdexSectionKind,
 )
 from dexbuf.zip import ZipArchive
-
-
-def create_minimal_dex_bytes() -> bytes:
-    """Helper to construct minimal valid DEX header bytes (v035)."""
-    magic = b"dex\n035\x00"
-    checksum = 0x12345678
-    signature = b"\x00" * 20
-    file_size = HeaderItem.STRUCT.size  # 112 bytes
-    header_size = HeaderItem.STRUCT.size
-    endian_tag = 0x12345678
-
-    header = HeaderItem(
-        magic=magic,
-        checksum=checksum,
-        signature=signature,
-        file_size=file_size,
-        header_size=header_size,
-        endian_tag=endian_tag,
-        link_size=0,
-        link_off=Offset[Any](0),
-        map_off=Offset[MapList](0),
-        string_ids_size=Count[StringIdItem](0),
-        string_ids_off=Offset[StringIdItem](0),
-        type_ids_size=Count[TypeIdItem](0),
-        type_ids_off=Offset[TypeIdItem](0),
-        proto_ids_size=Count[ProtoIdItem](0),
-        proto_ids_off=Offset[ProtoIdItem](0),
-        field_ids_size=Count[FieldIdItem](0),
-        field_ids_off=Offset[FieldIdItem](0),
-        method_ids_size=Count[MethodIdItem](0),
-        method_ids_off=Offset[MethodIdItem](0),
-        class_defs_size=Count[ClassDefItem](0),
-        class_defs_off=Offset[ClassDefItem](0),
-        data_size=0,
-        data_off=Offset[Any](0),
-    )
-
-    buf = bytearray(header_size)
-    struct_format = HeaderItem.STRUCT
-    struct_format.pack_into(
-        buf,
-        0,
-        header.magic,
-        header.checksum,
-        header.signature,
-        header.file_size,
-        header.header_size,
-        header.endian_tag,
-        header.link_size,
-        header.link_off,
-        header.map_off,
-        header.string_ids_size,
-        header.string_ids_off,
-        header.type_ids_size,
-        header.type_ids_off,
-        header.proto_ids_size,
-        header.proto_ids_off,
-        header.field_ids_size,
-        header.field_ids_off,
-        header.method_ids_size,
-        header.method_ids_off,
-        header.class_defs_size,
-        header.class_defs_off,
-        header.data_size,
-        header.data_off,
-    )
-    return bytes(buf)
+from tests.builders import (  # type: ignore[import-not-found, missing-import]
+    create_minimal_dex_bytes,
+)
 
 
 def create_test_vdex(

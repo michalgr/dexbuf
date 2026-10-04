@@ -1,7 +1,6 @@
 """Unit tests for TypeLookupTable and TypeLookupTableEntry."""
 
 import unittest
-from typing import Any
 
 from dexbuf.cursor import Cursor
 from dexbuf.dex import DexFile
@@ -11,116 +10,11 @@ from dexbuf.type_lookup import (
     TypeLookupTableEntry,
     _BuilderEntry,
 )
+from tests.builders import build_dex_bytes  # type: ignore[import-not-found, missing-import]
 
 
-def create_multi_class_dex(class_descriptors: list[str]) -> bytes:
-    """Helper to construct a DEX file with specified class descriptors."""
-    from dexbuf import (
-        DEX_FILE_MAGIC,
-        ENDIAN_CONSTANT,
-        NO_INDEX,
-        NO_OFFSET,
-        ClassDefItem,
-        Count,
-        FieldIdItem,
-        HeaderItem,
-        Idx,
-        MethodIdItem,
-        Offset,
-        ProtoIdItem,
-        StringDataItem,
-        StringIdItem,
-        TypeIdItem,
-    )
-
-    header_size = 0x70
-
-    # Collect unique string list sorted
-    strings = sorted({*class_descriptors, "Ljava/lang/Object;"})
-
-    string_data_bytes = bytearray()
-    string_data_offsets: list[int] = []
-
-    # Calculate offset for string data
-    type_ids_size = len(strings)
-    class_defs_size = len(class_descriptors)
-
-    data_start_off = header_size + 4 * len(strings) + 4 * type_ids_size + 32 * class_defs_size
-    data_off = data_start_off
-
-    for s in strings:
-        item = StringDataItem.from_str(s)
-        string_data_offsets.append(data_off)
-        b = item.to_bytes()
-        string_data_bytes.extend(b)
-        data_off += len(b)
-
-    string_ids_off = header_size
-    string_ids_bytes = b"".join(
-        StringIdItem(string_data_off=Offset[StringDataItem](off)).to_bytes()
-        for off in string_data_offsets
-    )
-
-    type_ids_off = string_ids_off + len(string_ids_bytes)
-    type_ids = [TypeIdItem(descriptor_idx=Idx[StringIdItem](i)) for i in range(len(strings))]
-    type_ids_bytes = b"".join(t.to_bytes() for t in type_ids)
-
-    class_defs_off = type_ids_off + len(type_ids_bytes)
-
-    # Class defs
-    object_type_idx = strings.index("Ljava/lang/Object;")
-    class_defs = []
-    for c_desc in class_descriptors:
-        c_type_idx = strings.index(c_desc)
-        class_defs.append(
-            ClassDefItem(
-                class_idx=Idx[TypeIdItem](c_type_idx),
-                access_flags=0x0001,
-                superclass_idx=Idx[TypeIdItem](object_type_idx),
-                interfaces_off=NO_OFFSET,
-                source_file_idx=NO_INDEX,
-                annotations_off=NO_OFFSET,
-                class_data_off=NO_OFFSET,
-                static_values_off=NO_OFFSET,
-            )
-        )
-    class_defs_bytes = b"".join(cd.to_bytes() for cd in class_defs)
-
-    total_file_size = data_off
-
-    header = HeaderItem(
-        magic=DEX_FILE_MAGIC,
-        checksum=0,
-        signature=b"\x00" * 20,
-        file_size=total_file_size,
-        header_size=header_size,
-        endian_tag=ENDIAN_CONSTANT,
-        link_size=0,
-        link_off=NO_OFFSET,
-        map_off=NO_OFFSET,
-        string_ids_size=Count[StringIdItem](len(strings)),
-        string_ids_off=Offset[StringIdItem](string_ids_off),
-        type_ids_size=Count[TypeIdItem](type_ids_size),
-        type_ids_off=Offset[TypeIdItem](type_ids_off),
-        proto_ids_size=Count[ProtoIdItem](0),
-        proto_ids_off=NO_OFFSET,
-        field_ids_size=Count[FieldIdItem](0),
-        field_ids_off=NO_OFFSET,
-        method_ids_size=Count[MethodIdItem](0),
-        method_ids_off=NO_OFFSET,
-        class_defs_size=Count[ClassDefItem](class_defs_size),
-        class_defs_off=Offset[ClassDefItem](class_defs_off),
-        data_size=total_file_size - data_start_off,
-        data_off=Offset[Any](data_start_off),
-    )
-
-    buf = bytearray(header.to_bytes())
-    buf.extend(string_ids_bytes)
-    buf.extend(type_ids_bytes)
-    buf.extend(class_defs_bytes)
-    buf.extend(string_data_bytes)
-
-    return bytes(buf)
+def _make_dex(class_descriptors: list[str]) -> bytes:
+    return build_dex_bytes([{"name": c, "super": "Ljava/lang/Object;"} for c in class_descriptors])
 
 
 class TestTypeLookupTable(unittest.TestCase):
@@ -198,7 +92,7 @@ class TestTypeLookupTable(unittest.TestCase):
 
     def test_create_and_lookup_zero_class_dex(self) -> None:
         """Verify TypeLookupTable.create and lookup on a DEX file with 0 class definitions."""
-        dex_bytes = create_multi_class_dex([])
+        dex_bytes = _make_dex([])
         dex = DexFile(dex_bytes)
 
         table = TypeLookupTable.create(dex)
@@ -213,7 +107,7 @@ class TestTypeLookupTable(unittest.TestCase):
 
     def test_create_and_lookup_single_class_dex(self) -> None:
         """Verify TypeLookupTable.create and lookup on a single-class DEX file."""
-        dex_bytes = create_multi_class_dex(["LTestClass;"])
+        dex_bytes = _make_dex(["LTestClass;"])
         dex = DexFile(dex_bytes)
 
         table = TypeLookupTable.create(dex)
@@ -230,7 +124,7 @@ class TestTypeLookupTable(unittest.TestCase):
 
     def test_builder_step_by_step(self) -> None:
         """Verify TypeLookupTableBuilder steps and output."""
-        dex_bytes = create_multi_class_dex(["LClassA;", "LClassB;"])
+        dex_bytes = _make_dex(["LClassA;", "LClassB;"])
         dex = DexFile(dex_bytes)
 
         builder = TypeLookupTableBuilder(dex)
@@ -253,7 +147,7 @@ class TestTypeLookupTable(unittest.TestCase):
 
     def test_builder_buckets_reuse_and_clearing(self) -> None:
         """Verify TypeLookupTableBuilder reuses self.buckets list and clears bucket contents."""
-        dex_bytes = create_multi_class_dex(["LClassA;", "LClassB;"])
+        dex_bytes = _make_dex(["LClassA;", "LClassB;"])
         dex = DexFile(dex_bytes)
 
         builder = TypeLookupTableBuilder(dex)
@@ -280,7 +174,7 @@ class TestTypeLookupTable(unittest.TestCase):
             "Lcom/example/ClassD;",
             "Lcom/example/ClassE;",
         ]
-        dex_bytes = create_multi_class_dex(classes)
+        dex_bytes = _make_dex(classes)
         dex = DexFile(dex_bytes)
 
         table = TypeLookupTable.create(dex)
@@ -303,7 +197,7 @@ class TestTypeLookupTable(unittest.TestCase):
         """Verify collision chaining and resolution in TypeLookupTable."""
         # Construct synthetic multi-class descriptors
         classes = [f"Lcom/example/TestClass{i};" for i in range(16)]
-        dex_bytes = create_multi_class_dex(classes)
+        dex_bytes = _make_dex(classes)
         dex = DexFile(dex_bytes)
 
         table = TypeLookupTable.create(dex)
@@ -318,7 +212,7 @@ class TestTypeLookupTable(unittest.TestCase):
     def test_lookup_in_empty_table(self) -> None:
         """Verify lookup on an empty TypeLookupTable returns None."""
         raw_empty = b"\x00" * 8
-        dex_bytes = create_multi_class_dex(["LTestClass;"])
+        dex_bytes = _make_dex(["LTestClass;"])
         table = TypeLookupTable(dex_bytes, raw_empty)
 
         self.assertEqual(len(table), 1)
@@ -326,7 +220,7 @@ class TestTypeLookupTable(unittest.TestCase):
 
     def test_type_lookup_table_sequence_protocol(self) -> None:
         """Verify TypeLookupTable Sequence protocol, indexing, slicing, and errors."""
-        dex_bytes = create_multi_class_dex(["LTestClass;"])
+        dex_bytes = _make_dex(["LTestClass;"])
         dex = DexFile(dex_bytes)
         table = TypeLookupTable.create(dex)
 

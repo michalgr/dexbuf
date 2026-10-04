@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 from dexbuf.cli import main
 from dexbuf.flags import AccessFlags
-from tests.builders import build_dex_bytes  # type: ignore[import-not-found, missing-import]
-from tests.helpers import get_k9mail_apk_path  # type: ignore[import-not-found, missing-import]
+from tests.builders import build_dex_bytes
+from tests.helpers import get_k9mail_apk_path
 
 
 class TestCLI(unittest.TestCase):

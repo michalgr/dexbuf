@@ -17,7 +17,7 @@ from dexbuf.zip import (
     LocalFileHeader,
     ZipArchive,
 )
-from tests.builders import (  # type: ignore[import-not-found, missing-import]
+from tests.builders import (
     create_minimal_dex_bytes,
 )
 

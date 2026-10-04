@@ -34,7 +34,7 @@ from dexbuf.vdex import (
     VdexSectionKind,
 )
 from dexbuf.zip import ZipArchive
-from tests.builders import (  # type: ignore[import-not-found, missing-import]
+from tests.builders import (
     create_minimal_dex_bytes,
 )
 

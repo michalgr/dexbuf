@@ -1080,8 +1080,11 @@ class ZipAdapter:
     def __init__(self, archive: ZipArchive, loader: ClassLoader) -> None:
         self._archive: ZipArchive = archive
         self._loader: ClassLoader = loader
+        dex_names = _get_multidex_names(archive)
+        if not dex_names:
+            raise ValueError("ZIP archive contains no .dex files")
         self._dex_files: tuple[DexFile, ...] = tuple(
-            DexFile(archive.read(entry_name)) for entry_name in _get_multidex_names(archive)
+            DexFile(archive.read(entry_name)) for entry_name in dex_names
         )
 
     @property

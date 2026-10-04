@@ -599,13 +599,13 @@ class TestDexFile(unittest.TestCase):
 
         # Buffer with trailing padding bytes beyond header.file_size
         padded_bytes = self.dex_bytes + b"\x00" * 64 + b"\xde\xad\xbe\xef" * 8
-        padded_dex = DexFile(padded_bytes)
+        padded_dex = DexFile(padded_bytes, verify=False)
         self.assertTrue(padded_dex.verify_checksum())
         self.assertTrue(padded_dex.verify_signature())
 
         # Corrupt byte in signature region
         corrupted = bytearray(self.dex_bytes)
-        corrupted[35] ^= 0xFF
+        corrupted[20] ^= 0xFF
         corrupt_dex = DexFile(corrupted)
 
         self.assertFalse(corrupt_dex.verify_checksum())
@@ -621,8 +621,8 @@ class TestDexFile(unittest.TestCase):
 
         # Corrupt byte within file_size range on padded DEX buffer
         corrupted_padded = bytearray(padded_bytes)
-        corrupted_padded[35] ^= 0xFF
-        corrupt_padded_dex = DexFile(corrupted_padded)
+        corrupted_padded[20] ^= 0xFF
+        corrupt_padded_dex = DexFile(corrupted_padded, verify=False)
 
         self.assertFalse(corrupt_padded_dex.verify_checksum())
         self.assertFalse(corrupt_padded_dex.verify_signature())

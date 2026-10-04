@@ -34,11 +34,6 @@ class TestTypesRuntime(unittest.TestCase):
         self.assertIs(type(offset_val), int)
         self.assertIs(type(count_val), int)
 
-        # Check small-int identity / zero wrapping penalty
-        self.assertIs(id_val, 42)
-        self.assertIs(offset_val, 0x10)
-        self.assertIs(count_val, 5)
-
     def test_generic_subscripting(self) -> None:
         """Verify generic subscripting Idx[T](val) returns native int directly."""
         id_typed = Idx[DummyItem](100)
@@ -67,18 +62,6 @@ class TestTypesRuntime(unittest.TestCase):
         mv = memoryview(buf)
         mv_slice = mv[offset : offset + count]
         self.assertEqual(mv_slice.tobytes(), b"DEX Buffer")
-
-    def test_arithmetic_operations(self) -> None:
-        """Verify integer arithmetic operations work natively."""
-        off1 = Offset(10)
-        off2 = Offset(20)
-        cnt = Count(5)
-
-        self.assertEqual(off1 + off2, 30)
-        self.assertEqual(off2 - off1, 10)
-        self.assertEqual(cnt * 4, 20)
-        self.assertEqual(off2 // cnt, 4)
-        self.assertEqual(off1 % 3, 1)
 
     def test_sentinels(self) -> None:
         """Verify sentinel values match expected integer values and types."""

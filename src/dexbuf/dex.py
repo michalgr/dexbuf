@@ -106,6 +106,15 @@ class DexFile:
 
     def __init__(self, buffer: Buffer, *, verify: bool = True) -> None:
         self._buffer: memoryview = memoryview(buffer)
+        if len(self._buffer) < HeaderItem.STRUCT.size:
+            try:
+                self._buffer.release()
+            except BufferError:
+                pass
+            raise ValueError(
+                f"Buffer too small for DEX header: expected at least "
+                f"{HeaderItem.STRUCT.size} bytes, got {len(self._buffer)}"
+            )
         try:
             self.header: HeaderItem = HeaderItem.from_buffer(self._buffer, Offset[HeaderItem](0))
             if verify:
@@ -172,6 +181,11 @@ class DexFile:
             raise ValueError(f"Invalid DEX magic: {self.header.magic!r}")
         if not self.header.is_supported_version:
             raise ValueError(f"Unsupported DEX version: {self.header.version!r}")
+        if self.header.file_size != len(self._buffer):
+            raise ValueError(
+                f"File size mismatch: header specifies {self.header.file_size} bytes, "
+                f"but buffer is {len(self._buffer)} bytes"
+            )
         if self.header.endian_tag == REVERSE_ENDIAN_CONSTANT:
             raise ValueError("Reverse-endian DEX files are not supported")
         if not self.header.is_valid_endian:

@@ -1542,7 +1542,8 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
                         }
                     ],
                 }
-            ]
+            ],
+            extra_strings=["Hello"],
         )
         loader = ClassLoader.from_elements([DexFile(dex_bytes)])
         cls = loader["com.example.CFGTest"]
@@ -1572,7 +1573,7 @@ class TestCodeAndCFGDomainModel(unittest.TestCase):
         self.assertEqual(inst0.opcode, Opcode.CONST_STRING)
         self.assertEqual(inst0.mnemonic, "const-string")
         self.assertEqual(inst0.register_names, ("v0",))
-        self.assertEqual(inst0.string_value, "I")  # String ID 0 in build_dex_bytes
+        self.assertEqual(inst0.string_value, "Hello")
 
         inst1 = code.at(2)
         self.assertEqual(inst1.literal, 1)
